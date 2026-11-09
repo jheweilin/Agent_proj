@@ -1,0 +1,58 @@
+name: plasma-agent
+
+x-app: &app
+  image: plasma-agent:latest
+  build:
+    context: ..
+    dockerfile: Dockerfile
+  env_file: .env
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16   # PostgreSQL 16 + pgvector extension (same data dir as postgres:16)
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: plasma
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: plasma
+    volumes:
+      - /data/plasma-agent/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plasma -d plasma"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - /data/plasma-agent/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    <<: *app
+    ports:
+      - "0.0.0.0:${WEB_PORT:-8600}:8000"
+    volumes:
+      - /data/plasma-agent/workspaces:/data/plasma-agent/workspaces
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "plasma_agent.worker"]
+    volumes:
+      # same host path inside and outside, so sandbox bind mounts resolve correctly
+      - /data/plasma-agent/workspaces:/data/plasma-agent/workspaces
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${AWS_CONFIG_DIR}:/root/.aws:ro
