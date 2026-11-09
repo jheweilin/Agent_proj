@@ -3,12 +3,16 @@ import { Item, parsePipe, Project } from "./api";
 import { Markdown } from "./Render";
 
 // stages actually implemented in the current phase; the rest show as "之後" (Phase D)
-const IMPLEMENTED = new Set(["clarify", "retrieve", "plan", "approve_plan", "research", "verify", "report"]);
+const IMPLEMENTED = new Set(["clarify", "retrieve", "plan", "approve_plan", "research", "verify", "replicate", "review", "report"]);
 const GATE = new Set(["approve_plan", "report"]); // human gates (report = result acceptance)
 const GRADE_CLASS: Record<string, string> = { "通過": "ok", "部分通過": "warn", "未通過": "bad", "未定": "muted" };
 
-const CLAR = "釐清 · Clarifier", PLAN = "規劃 · Planner", RES = "研究 · Researcher", VERIF = "驗證 · Verifier";
-const STAGE_OF: Record<string, string> = { [CLAR]: "clarify", [PLAN]: "plan", [RES]: "research", [VERIF]: "verify" };
+const CLAR = "釐清 · Clarifier", PLAN = "規劃 · Planner", RES = "研究 · Researcher";
+const VERIF = "驗證 · Verifier", REPLIC = "第二實作 · Replicator", REVIEW = "審查 · Reviewer";
+const STAGE_OF: Record<string, string> = {
+  [CLAR]: "clarify", [PLAN]: "plan", [RES]: "research", [VERIF]: "verify", [REPLIC]: "replicate", [REVIEW]: "review",
+};
+const NOTE_STAGE: Record<string, string> = { reject_plan: CLAR, verify: VERIF, replicate: REPLIC, review: REVIEW };
 
 // who runs each stage + a one-line description, shown on hover
 const STAGE_META: Record<string, { who: string; desc: string }> = {
@@ -32,7 +36,7 @@ export function stageLabels(items: Item[]): { labels: Record<number, string>; st
     if (it.kind === "user") {
       const p = parsePipe(it.text);
       if (p?.kind === "evidence") cur = PLAN;
-      else if (p?.kind === "note") cur = p.note === "reject_plan" ? CLAR : p.note === "verify" ? VERIF : RES;
+      else if (p?.kind === "note") cur = NOTE_STAGE[p.note] || RES;
     } else {
       labels[it.id] = cur;
       stages[it.id] = STAGE_OF[cur];
@@ -148,6 +152,8 @@ const NOTE_LABEL: Record<string, string> = {
   reject_plan: "計畫退回 — 重新釐清與規劃",
   reject_accept: "結果退回 — 重做研究",
   verify: "開始獨立驗證",
+  replicate: "開始獨立複現",
+  review: "開始唯讀審查",
 };
 
 export function PipelineNote({ note, body }: { note: string; body: string }) {

@@ -97,18 +97,22 @@ class StopRequested(Exception):
 
 
 class Runner:
-    def __init__(self, run: Run, thread: Thread, user: User, domain: domains.Domain, role=None):
+    def __init__(self, run: Run, thread: Thread, user: User, domain: domains.Domain, role=None, init_messages=None):
         self.run = run
         self.thread = thread
         self.user = user
         self.domain = domain
         self.role = role            # pipeline stage role (None = plain chat / Phase A behaviour)
+        # start from a constructed context instead of the thread history (isolated subagent, e.g. Replicator)
+        self.init_messages = init_messages
         self.run_id = str(run.id)
         self.thread_id = str(thread.id)
         self.model = settings.model
         # tools this run exposes: the domain's set, further restricted by the role (None = all)
-        domain_allow = domain.allowed_tools(set(tools.REGISTRY))
-        self._tool_allow = role.allowed_tools(domain_allow) if role is not None else domain_allow
+        all_names = set(tools.REGISTRY)
+        dom = domain.allowed_tools(all_names)              # None (all registered) or a set
+        domain_set = all_names if dom is None else dom
+        self._tool_allow = role.allowed_tools(domain_set) if role is not None else dom
         self.binding_beta = True     # send thinking-binding-controls beta with drop_block
         self.strip_thinking = False  # fallback: remove earlier thinking blocks from the request copy
         self.usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0,
@@ -208,7 +212,7 @@ class Runner:
             return msg
 
     async def loop(self) -> str:
-        messages = await _load_history(self.thread.id)
+        messages = list(self.init_messages) if self.init_messages is not None else await _load_history(self.thread.id)
         truncations = 0
         for i in range(settings.max_iterations):
             await self.check_stop()

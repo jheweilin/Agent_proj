@@ -70,15 +70,46 @@ async def _latest_user_text(thread_id: uuid.UUID) -> str:
     return ""
 
 
-async def _run_role(outer, role, stage: str) -> None:
-    """Run one LLM stage as its own agent loop, folding its usage into the outer run."""
+async def _run_role(outer, role, stage: str, init_messages=None) -> None:
+    """Run one LLM stage as its own agent loop, folding its usage into the outer run.
+
+    `init_messages` runs the role from a constructed context instead of the thread history
+    (used by the Replicator so it can't see the research results — true independence).
+    """
     await outer.publish({"type": "stage_start", "stage": stage, "role": role.name, "label": role.label})
-    r = agent.Runner(outer.run, outer.thread, outer.user, outer.domain, role=role)
+    r = agent.Runner(outer.run, outer.thread, outer.user, outer.domain, role=role, init_messages=init_messages)
     await r.loop()
     for k in outer.usage:
         outer.usage[k] += r.usage.get(k, 0)
     outer.model = r.model
     await outer.publish({"type": "stage_end", "stage": stage, "role": role.name})
+
+
+async def _latest_assistant_text(thread_id: uuid.UUID) -> str:
+    async with SessionLocal() as s:
+        rows = (await s.execute(select(Message).where(Message.thread_id == thread_id)
+                                .order_by(Message.id))).scalars().all()
+    for m in reversed(rows):
+        if m.role == "assistant":
+            txt = "\n".join(b.get("text", "") for b in m.content if b.get("type") == "text").strip()
+            if txt:
+                return txt
+    return ""
+
+
+def _read_json(thread_id, name: str):
+    try:
+        return json.loads((sandbox.workspace_dir(str(thread_id)) / ".pipeline" / name).read_text())
+    except Exception:
+        return None
+
+
+async def _set_card(thread_id, **fields) -> None:
+    async with SessionLocal() as s:
+        p = (await s.execute(select(Project).where(Project.thread_id == thread_id))).scalar_one_or_none()
+        if p:
+            p.card = {**(p.card or {}), **fields}
+            await s.commit()
 
 
 async def _retrieve(outer) -> None:
@@ -113,8 +144,8 @@ async def _retrieve(outer) -> None:
     await outer.publish({"type": "stage_end", "stage": stage, "role": "retrieval"})
 
 
-def _grade(verdict: dict | None) -> dict:
-    """Compute the research grade from the Verifier's structured verdict (stage ⑨, programmatic)."""
+def _grade(verdict: dict | None, replication: dict | None, review: dict | None) -> dict:
+    """Stage ⑨ (programmatic): fold verification, independent replication and review into a grade."""
     if not verdict or not verdict.get("checks"):
         return {"level": "未定", "passed": 0, "total": 0, "summary": "沒有可用的結構化驗證結果（驗證者未記錄）。"}
     checks = verdict["checks"]
@@ -127,32 +158,72 @@ def _grade(verdict: dict | None) -> dict:
         level = "部分通過"
     else:
         level = "未通過"
-    return {"level": level, "passed": passed, "total": total, "summary": verdict.get("summary", "")}
+    extra = []
+    if replication is not None:
+        extra.append("第二實作已獨立重做")
+    if review is not None:
+        if not review.get("consistent", True) and level == "通過":
+            level = "部分通過"
+        extra.append(f"審查{'一致' if review.get('consistent') else '指出不一致'}"
+                     + (f"、{len(review.get('concerns') or [])} 項疑慮" if review.get("concerns") else ""))
+    summary = verdict.get("summary", "")
+    if extra:
+        summary = (summary + "｜" + "；".join(extra)) if summary else "；".join(extra)
+    return {"level": level, "passed": passed, "total": total, "summary": summary}
 
 
 async def _verify(outer) -> None:
-    """Stage ⑥ (independent verification) + ⑨ (programmatic grade): run the Verifier, then grade."""
-    vf = sandbox.workspace_dir(str(outer.thread.id)) / ".pipeline" / "verification.json"
+    """Stage ⑥: independent verification (same sandbox, reruns & checks → structured verdict)."""
     try:
-        vf.unlink()  # drop any stale verdict so the grade reflects this run only
+        (sandbox.workspace_dir(str(outer.thread.id)) / ".pipeline" / "verification.json").unlink()
     except FileNotFoundError:
         pass
     # the turn must end with a user message before the next LLM role runs (Bedrock has no prefill)
     await agent._save_message(outer.thread.id, outer.run.id, "user", [{"type": "text", "text": _note("verify") +
         "\n（請以獨立驗證者的身分，重跑並查核上述研究結果；完成後用 record_verification 記錄結構化結論。）"}])
     await _run_role(outer, roles.VERIFIER, "verify")
-    verdict = None
+    await _set_card(outer.thread.id, verification=_read_json(outer.thread.id, "verification.json"))
+
+
+async def _replicate(outer) -> None:
+    """Stage ⑦: independent replication. The Replicator sees only the plan (isolated context)."""
     try:
-        verdict = json.loads(vf.read_text())
-    except Exception as e:
-        log.warning("no verification verdict: %s", e)
-    grade = _grade(verdict)
-    async with SessionLocal() as s:
-        p = (await s.execute(select(Project).where(Project.thread_id == outer.thread.id))).scalar_one_or_none()
-        if p:
-            p.card = {**(p.card or {}), "verification": verdict, "grade": grade}
-            await s.commit()
+        (sandbox.workspace_dir(str(outer.thread.id)) / ".pipeline" / "replication.json").unlink()
+    except FileNotFoundError:
+        pass
+    plan = (await _get_card(outer.thread.id)).get("plan") or await _latest_assistant_text(outer.thread.id)
+    msg = [{"type": "text", "text": _note("replicate") +
+            "\n（以下是已核准的研究計畫。請完全獨立、只在 /workspace/.replica 裡，依計畫重做一次並用 "
+            "record_replication 記錄關鍵數值；不要參考他人結果、不要上網或查知識庫。）\n\n【計畫】\n" + plan}]
+    await agent._save_message(outer.thread.id, outer.run.id, "user", msg)
+    # run from a constructed context (just the plan) so the Replicator can't see the research
+    await _run_role(outer, roles.REPLICATOR, "replicate", init_messages=[{"role": "user", "content": msg}])
+    await _set_card(outer.thread.id, replication=_read_json(outer.thread.id, "replication.json"))
+
+
+async def _review(outer) -> None:
+    """Stage ⑧: read-only review of research + verification + replication for consistency."""
+    try:
+        (sandbox.workspace_dir(str(outer.thread.id)) / ".pipeline" / "review.json").unlink()
+    except FileNotFoundError:
+        pass
+    await agent._save_message(outer.thread.id, outer.run.id, "user", [{"type": "text", "text": _note("review") +
+        "\n（請審查上述研究、驗證與第二實作的物理與推論，以及三方結果是否一致；用 record_review 記錄疑慮與是否一致。）"}])
+    await _run_role(outer, roles.REVIEWER, "review")
+    await _set_card(outer.thread.id, review=_read_json(outer.thread.id, "review.json"))
+
+
+async def _finalize_grade(outer) -> None:
+    card = await _get_card(outer.thread.id)
+    grade = _grade(card.get("verification"), card.get("replication"), card.get("review"))
+    await _set_card(outer.thread.id, grade=grade)
     await outer.publish({"type": "grade", **grade})
+
+
+async def _get_card(thread_id) -> dict:
+    async with SessionLocal() as s:
+        p = (await s.execute(select(Project).where(Project.thread_id == thread_id))).scalar_one_or_none()
+        return dict(p.card or {}) if p else {}
 
 
 async def _record_run_stage(run_id: uuid.UUID, stage: str) -> None:
@@ -179,6 +250,7 @@ async def advance(run: Run, thread, user, domain, outer) -> str:
             await _set(thread.id, stage, "running", outer)
         elif stage == "plan":
             await _run_role(outer, roles.PLANNER, stage)
+            await _set_card(thread.id, plan=await _latest_assistant_text(thread.id))  # capture plan for the Replicator
             stage = "approve_plan"
             await _set(thread.id, stage, "awaiting_plan_approval", outer)
             await outer.publish({"type": "awaiting_approval", "gate": "plan"})
@@ -188,7 +260,16 @@ async def advance(run: Run, thread, user, domain, outer) -> str:
             stage = "verify"
             await _set(thread.id, stage, "running", outer)
         elif stage == "verify":
-            await _verify(outer)          # stage ⑥ (verify) + ⑨ (programmatic grade)
+            await _verify(outer)          # ⑥ independent verification
+            stage = "replicate"
+            await _set(thread.id, stage, "running", outer)
+        elif stage == "replicate":
+            await _replicate(outer)       # ⑦ independent replication (isolated context)
+            stage = "review"
+            await _set(thread.id, stage, "running", outer)
+        elif stage == "review":
+            await _review(outer)          # ⑧ read-only review
+            await _finalize_grade(outer)  # ⑨ programmatic grade from all three
             stage = "report"
             await _set(thread.id, stage, "awaiting_acceptance", outer)
             await outer.publish({"type": "awaiting_approval", "gate": "accept"})

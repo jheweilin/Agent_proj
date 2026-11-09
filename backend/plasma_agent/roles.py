@@ -9,18 +9,27 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+# tools a read-only reviewer may use (look, search, record findings — never execute or write)
+READONLY_TOOLS = {"read_file", "list_files", "see_image", "kb_search", "kb_read", "record_review"}
+
+
 @dataclass(frozen=True)
 class Role:
     name: str
     label: str
     overlay: str          # appended to the domain system prompt for this stage
-    tool_mode: str        # "none" = no tools (pure reasoning), "domain" = the domain's full tool set
+    tool_mode: str        # none | domain | readonly | replicate
 
-    def allowed_tools(self, domain_allow: set[str] | None) -> set[str] | None:
-        """Intersect the role's tool policy with what the domain exposes."""
+    def allowed_tools(self, domain_set: set[str]) -> set[str]:
+        """The tool names this role may use, given the domain's concrete tool set."""
         if self.tool_mode == "none":
             return set()
-        return domain_allow  # "domain": inherit (None means all registered tools)
+        if self.tool_mode == "readonly":
+            return {n for n in domain_set if n in READONLY_TOOLS}
+        if self.tool_mode == "replicate":  # independent redo: no KB/web/comsol, no other verdict tools
+            return {n for n in domain_set if not n.startswith(("kb_", "web_", "search_", "comsol"))
+                    and n not in ("record_verification", "record_review")}
+        return set(domain_set)  # "domain"
 
 
 CLARIFIER = Role(
@@ -94,7 +103,36 @@ VERIFIER = Role(
 )
 
 
-ROLES: dict[str, Role] = {r.name: r for r in (CLARIFIER, PLANNER, RESEARCHER, VERIFIER)}
+REPLICATOR = Role(
+    name="replicator", label="第二實作",
+    tool_mode="replicate",
+    overlay="""
+# 目前階段：第二實作（Replicator，獨立重做）
+
+你拿到的只有下面這份「研究計畫」。你**看不到別人怎麼做、也不知道別人的結果**。請**完全獨立**地依計畫把它重做一次，用來和研究者的結果交叉比對。
+
+- 只在 `/workspace/.replica/` 目錄裡工作（先 `mkdir -p /workspace/.replica`），**不要去看或引用 `/workspace` 其他地方的檔案**。
+- **不要上網查、不要用知識庫**；就照計畫自己實作、自己算。
+- 做完用 `record_replication` 記下你**獨立**得到的關鍵數值（名稱、數值、單位）和一句話說明。
+
+目的不是交報告，是獨立拿到一組可以和別人對照的結果。只要照計畫把關鍵量算出來即可。
+""".strip(),
+)
+
+REVIEWER = Role(
+    name="reviewer", label="審查",
+    tool_mode="readonly",
+    overlay="""
+# 目前階段：審查（Reviewer，唯讀）
+
+你可以看到完整的研究、驗證與第二實作。你的工作是審查**物理與推論是否站得住腳**，以及三方結果是否一致。你**只能讀、不能改、不能重跑**（沒有執行或寫檔工具），只能提出問題。
+
+檢查重點：假設是否合理、方法是否適當、單位與量綱、研究／驗證／複現三者的數字是否一致、有沒有過度宣稱或被忽略的限制。看完用 `record_review` 記下你的疑慮清單與整體是否一致（consistent）。你不能改等級，只負責提出問題。
+""".strip(),
+)
+
+
+ROLES: dict[str, Role] = {r.name: r for r in (CLARIFIER, PLANNER, RESEARCHER, VERIFIER, REPLICATOR, REVIEWER)}
 
 
 def get(name: str) -> Role:
