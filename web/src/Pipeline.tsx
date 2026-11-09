@@ -3,11 +3,12 @@ import { Item, parsePipe, Project } from "./api";
 import { Markdown } from "./Render";
 
 // stages actually implemented in the current phase; the rest show as "之後" (Phase D)
-const IMPLEMENTED = new Set(["clarify", "retrieve", "plan", "approve_plan", "research", "report"]);
+const IMPLEMENTED = new Set(["clarify", "retrieve", "plan", "approve_plan", "research", "verify", "report"]);
 const GATE = new Set(["approve_plan", "report"]); // human gates (report = result acceptance)
+const GRADE_CLASS: Record<string, string> = { "通過": "ok", "部分通過": "warn", "未通過": "bad", "未定": "muted" };
 
-const CLAR = "釐清 · Clarifier", PLAN = "規劃 · Planner", RES = "研究 · Researcher";
-const STAGE_OF: Record<string, string> = { [CLAR]: "clarify", [PLAN]: "plan", [RES]: "research" };
+const CLAR = "釐清 · Clarifier", PLAN = "規劃 · Planner", RES = "研究 · Researcher", VERIF = "驗證 · Verifier";
+const STAGE_OF: Record<string, string> = { [CLAR]: "clarify", [PLAN]: "plan", [RES]: "research", [VERIF]: "verify" };
 
 // who runs each stage + a one-line description, shown on hover
 const STAGE_META: Record<string, { who: string; desc: string }> = {
@@ -31,7 +32,7 @@ export function stageLabels(items: Item[]): { labels: Record<number, string>; st
     if (it.kind === "user") {
       const p = parsePipe(it.text);
       if (p?.kind === "evidence") cur = PLAN;
-      else if (p?.kind === "note") cur = p.note === "reject_plan" ? CLAR : RES;
+      else if (p?.kind === "note") cur = p.note === "reject_plan" ? CLAR : p.note === "verify" ? VERIF : RES;
     } else {
       labels[it.id] = cur;
       stages[it.id] = STAGE_OF[cur];
@@ -93,10 +94,17 @@ export function ApprovalBar({ project, busy, onApprove, onReject }: {
           <strong>{plan ? "計畫待核准" : "結果待驗收"}</strong>
           <div className="muted small">
             {plan ? "看過上方的規劃後核准即可開始研究；或退回並說明要修改的地方。"
-                  : "確認研究結果無誤即可完成；或退回並說明要修正的地方。"}
+                  : "程式已依獨立驗證結果評級。確認無誤即可完成；或退回並說明要修正的地方。"}
           </div>
         </div>
       </div>
+      {accept && project.grade && (
+        <div className={`grade grade-${GRADE_CLASS[project.grade.level] || "muted"}`}>
+          <span className="grade-level">{project.grade.level}</span>
+          <span className="grade-count">獨立驗證 {project.grade.passed}/{project.grade.total} 項通過</span>
+          {project.grade.summary && <span className="grade-sum">{project.grade.summary}</span>}
+        </div>
+      )}
       {!rejecting ? (
         <div className="approve-actions">
           <button className="btn primary" disabled={busy} onClick={onApprove}>
@@ -139,6 +147,7 @@ const NOTE_LABEL: Record<string, string> = {
   approved_plan: "計畫已核准 — 開始研究",
   reject_plan: "計畫退回 — 重新釐清與規劃",
   reject_accept: "結果退回 — 重做研究",
+  verify: "開始獨立驗證",
 };
 
 export function PipelineNote({ note, body }: { note: string; body: string }) {

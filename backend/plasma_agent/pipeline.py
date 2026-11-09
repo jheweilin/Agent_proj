@@ -17,7 +17,7 @@ import uuid
 
 from sqlalchemy import select
 
-from . import agent, events, kb, roles, tools
+from . import agent, events, kb, roles, sandbox, tools
 from .db import Message, Project, Run, SessionLocal
 
 log = logging.getLogger("plasma_agent.pipeline")
@@ -113,6 +113,48 @@ async def _retrieve(outer) -> None:
     await outer.publish({"type": "stage_end", "stage": stage, "role": "retrieval"})
 
 
+def _grade(verdict: dict | None) -> dict:
+    """Compute the research grade from the Verifier's structured verdict (stage ⑨, programmatic)."""
+    if not verdict or not verdict.get("checks"):
+        return {"level": "未定", "passed": 0, "total": 0, "summary": "沒有可用的結構化驗證結果（驗證者未記錄）。"}
+    checks = verdict["checks"]
+    total = len(checks)
+    passed = sum(1 for c in checks if c.get("passed"))
+    overall = bool(verdict.get("overall_passed"))
+    if overall and passed == total:
+        level = "通過"
+    elif passed >= max(1, round(total * 0.6)):
+        level = "部分通過"
+    else:
+        level = "未通過"
+    return {"level": level, "passed": passed, "total": total, "summary": verdict.get("summary", "")}
+
+
+async def _verify(outer) -> None:
+    """Stage ⑥ (independent verification) + ⑨ (programmatic grade): run the Verifier, then grade."""
+    vf = sandbox.workspace_dir(str(outer.thread.id)) / ".pipeline" / "verification.json"
+    try:
+        vf.unlink()  # drop any stale verdict so the grade reflects this run only
+    except FileNotFoundError:
+        pass
+    # the turn must end with a user message before the next LLM role runs (Bedrock has no prefill)
+    await agent._save_message(outer.thread.id, outer.run.id, "user", [{"type": "text", "text": _note("verify") +
+        "\n（請以獨立驗證者的身分，重跑並查核上述研究結果；完成後用 record_verification 記錄結構化結論。）"}])
+    await _run_role(outer, roles.VERIFIER, "verify")
+    verdict = None
+    try:
+        verdict = json.loads(vf.read_text())
+    except Exception as e:
+        log.warning("no verification verdict: %s", e)
+    grade = _grade(verdict)
+    async with SessionLocal() as s:
+        p = (await s.execute(select(Project).where(Project.thread_id == outer.thread.id))).scalar_one_or_none()
+        if p:
+            p.card = {**(p.card or {}), "verification": verdict, "grade": grade}
+            await s.commit()
+    await outer.publish({"type": "grade", **grade})
+
+
 async def _record_run_stage(run_id: uuid.UUID, stage: str) -> None:
     async with SessionLocal() as s:
         r = await s.get(Run, run_id)
@@ -143,6 +185,10 @@ async def advance(run: Run, thread, user, domain, outer) -> str:
             break
         elif stage == "research":
             await _run_role(outer, roles.RESEARCHER, stage)
+            stage = "verify"
+            await _set(thread.id, stage, "running", outer)
+        elif stage == "verify":
+            await _verify(outer)          # stage ⑥ (verify) + ⑨ (programmatic grade)
             stage = "report"
             await _set(thread.id, stage, "awaiting_acceptance", outer)
             await outer.publish({"type": "awaiting_approval", "gate": "accept"})
@@ -222,5 +268,5 @@ async def reject(thread, feedback: str) -> dict:
 def project_out(p: Project | None) -> dict | None:
     if p is None:
         return None
-    return {"stage": p.stage, "status": p.status,
+    return {"stage": p.stage, "status": p.status, "grade": (p.card or {}).get("grade"),
             "stages": [{"name": n, "label": l} for n, l in STAGE_LABELS]}

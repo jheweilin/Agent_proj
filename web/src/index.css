@@ -464,3 +464,12 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
 .approve-reject { margin-top: 12px; }
 .approve-reject textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border-2); border-radius: 9px; padding: 8px 10px; font: inherit; background: var(--panel); color: var(--text); resize: vertical; outline: none; }
 .approve-reject textarea:focus { border-color: var(--accent-2); }
+/* grade card at the acceptance gate (programmatic, from independent verification) */
+.grade { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); }
+.grade-level { font-family: "Source Serif 4 Variable", "Noto Serif TC", Georgia, serif; font-weight: 600; font-size: 16px; padding: 1px 10px; border-radius: 999px; }
+.grade.grade-ok .grade-level { color: var(--ok); background: var(--ok-soft); }
+.grade.grade-warn .grade-level { color: var(--run); background: var(--run-soft); }
+.grade.grade-bad .grade-level { color: var(--err); background: var(--err-soft); }
+.grade.grade-muted .grade-level { color: var(--muted); background: var(--panel-2); }
+.grade-count { font-size: 13px; color: var(--text-2); }
+.grade-sum { flex-basis: 100%; font-size: 13px; color: var(--muted); line-height: 1.5; }

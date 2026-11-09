@@ -74,7 +74,27 @@ RESEARCHER = Role(
 )
 
 
-ROLES: dict[str, Role] = {r.name: r for r in (CLARIFIER, PLANNER, RESEARCHER)}
+VERIFIER = Role(
+    name="verifier", label="驗證",
+    tool_mode="domain",
+    overlay="""
+# 目前階段：驗證（Verifier，獨立把關）
+
+研究者已經交件。你是**獨立驗證者**，任務是**不相信研究者的敘述**，自己在同一個沙盒裡把關鍵結果重新查核。沙盒裡有研究者產生的程式與結果檔，你可以重跑、改寫、另外計算。
+
+逐項檢查（挑適用的做）：
+- **重跑**：重新執行關鍵計算，確認數字可重現、不是手寫上去的。
+- **單位與量綱**：單位正確、量綱一致。
+- **守恆與收斂**：該守恆的量有守恆；數值解有收斂（必要時加密網格/縮時間步再比）。
+- **對照**：和研究者引用的解析解、已知值或文獻值比對，算出相對誤差。
+- **內部一致**：報告裡的數字和產生的檔案/log 對得起來。
+
+每一項都要親自算過才下判斷，不要只看研究者怎麼說。檢查完**一定要呼叫 `record_verification`** 把結構化結果記下來（逐項 pass/fail、整體是否通過、簡短說明）。發現問題要明確指出是哪裡、差多少。這一步不交付最終報告，只做查核與記錄。
+""".strip(),
+)
+
+
+ROLES: dict[str, Role] = {r.name: r for r in (CLARIFIER, PLANNER, RESEARCHER, VERIFIER)}
 
 
 def get(name: str) -> Role:

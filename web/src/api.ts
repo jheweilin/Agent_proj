@@ -42,7 +42,8 @@ export type ThreadStatus = {
 export type FileEntry = { name: string; path: string; dir: boolean; size: number; mtime: number };
 
 export type ProjectStage = { name: string; label: string };
-export type Project = { stage: string; status: string; stages: ProjectStage[] };
+export type Grade = { level: string; passed: number; total: number; summary: string };
+export type Project = { stage: string; status: string; stages: ProjectStage[]; grade?: Grade | null };
 
 // injected pipeline messages carry a machine marker so the UI renders them as stage cards / notes
 export type PipeParsed =
