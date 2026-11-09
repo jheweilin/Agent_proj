@@ -7,24 +7,40 @@ const IMPLEMENTED = new Set(["clarify", "retrieve", "plan", "approve_plan", "res
 const GATE = new Set(["approve_plan", "report"]); // human gates (report = result acceptance)
 
 const CLAR = "釐清 · Clarifier", PLAN = "規劃 · Planner", RES = "研究 · Researcher";
+const STAGE_OF: Record<string, string> = { [CLAR]: "clarify", [PLAN]: "plan", [RES]: "research" };
 
-/** Label each assistant turn with the role that produced it, inferred from the pipeline markers. */
-export function stageLabels(items: Item[]): Record<number, string> {
+// who runs each stage + a one-line description, shown on hover
+const STAGE_META: Record<string, { who: string; desc: string }> = {
+  clarify: { who: "AI", desc: "把你的想法收斂成明確、可執行的研究問題" },
+  retrieve: { who: "程式", desc: "自動檢索知識庫與文獻，整理成證據" },
+  plan: { who: "AI", desc: "依證據設計模擬／分析計畫，參數標明來源" },
+  approve_plan: { who: "你", desc: "看過計畫後核准，或退回並說明要改的地方" },
+  research: { who: "AI", desc: "在 GPU 沙盒裡寫程式、跑模擬、畫圖、交件" },
+  verify: { who: "程式", desc: "重跑、單位、守恆、收斂、與已知解比對（Phase D）" },
+  replicate: { who: "AI", desc: "獨立重做一次，和研究結果對照（Phase D）" },
+  review: { who: "AI", desc: "唯讀審查物理與推論（Phase D）" },
+  report: { who: "程式／你", desc: "依驗證結果產生等級與報告，交由你驗收" },
+};
+
+/** Per assistant turn: the role label to show, and which stage it belongs to (for click-to-jump). */
+export function stageLabels(items: Item[]): { labels: Record<number, string>; stages: Record<number, string> } {
   let cur = CLAR;
-  const out: Record<number, string> = {};
+  const labels: Record<number, string> = {};
+  const stages: Record<number, string> = {};
   for (const it of items) {
     if (it.kind === "user") {
       const p = parsePipe(it.text);
       if (p?.kind === "evidence") cur = PLAN;
       else if (p?.kind === "note") cur = p.note === "reject_plan" ? CLAR : RES;
     } else {
-      out[it.id] = cur;
+      labels[it.id] = cur;
+      stages[it.id] = STAGE_OF[cur];
     }
   }
-  return out;
+  return { labels, stages };
 }
 
-export function StageTracker({ project, live }: { project: Project; live?: boolean }) {
+export function StageTracker({ project, live, onJump }: { project: Project; live?: boolean; onJump?: (stage: string) => void }) {
   const order = project.stages.map((s) => s.name);
   const curIdx = order.indexOf(project.stage);
   const done = project.status === "completed";
@@ -33,7 +49,7 @@ export function StageTracker({ project, live }: { project: Project; live?: boole
       {project.stages.map((s, i) => {
         const soon = !IMPLEMENTED.has(s.name);
         let state: string;
-        if (soon) state = done ? "soon" : "soon";
+        if (soon) state = "soon";
         else if (done) state = "done";
         else if (i < curIdx) state = "done";
         else if (i === curIdx) state = "current";
@@ -42,13 +58,19 @@ export function StageTracker({ project, live }: { project: Project; live?: boole
           (project.status === "awaiting_plan_approval" || project.status === "awaiting_acceptance");
         const running = state === "current" && project.status === "running" && !!live;
         const gate = GATE.has(s.name);
+        const statusText = state === "done" ? "已完成" : waiting ? "待你處理"
+          : running || state === "current" ? "進行中" : soon ? "之後（Phase D）" : "尚未開始";
+        const m = STAGE_META[s.name];
         return (
-          <div key={s.name} className={`track-node ${state} ${gate ? "gate" : ""} ${waiting ? "waiting" : ""}`} role="listitem">
+          <button key={s.name} type="button" role="listitem"
+            className={`track-node ${state} ${gate ? "gate" : ""} ${waiting ? "waiting" : ""}`}
+            data-tip={`${s.label}（${m?.who}）\n${statusText}\n${m?.desc}`}
+            onClick={() => onJump?.(s.name)}>
             <div className="track-dot">
               {state === "done" ? "✓" : running ? <span className="spinner sm" /> : gate ? "◆" : i + 1}
             </div>
             <div className="track-label">{s.label}</div>
-          </div>
+          </button>
         );
       })}
     </div>
@@ -101,7 +123,7 @@ export function EvidenceCard({ body, threadId }: { body: string; threadId: strin
   const [open, setOpen] = useState(false);
   const inner = body.replace(/^【[^\n]*】\n*/, ""); // heading is shown in the card header instead
   return (
-    <div className={`evidence ${open ? "open" : ""}`}>
+    <div className={`evidence ${open ? "open" : ""}`} data-stage="retrieve">
       <button className="evidence-head" onClick={() => setOpen((v) => !v)}>
         <span className="chev">{open ? "▾" : "▸"}</span>
         <span className="evidence-icon">❡</span>

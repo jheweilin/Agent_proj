@@ -170,7 +170,16 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   const isProject = mode === "project";
   const atGate = isProject && !activeRun && !!project &&
     (project.status === "awaiting_plan_approval" || project.status === "awaiting_acceptance");
-  const labels = useMemo(() => (isProject ? stageLabels(shown) : {} as Record<number, string>), [shown, isProject]);
+  const ann = useMemo(() => (isProject ? stageLabels(shown)
+    : { labels: {} as Record<number, string>, stages: {} as Record<number, string> }), [shown, isProject]);
+  const jumpToStage = useCallback((stage: string) => {
+    const target = stage === "approve_plan" ? "plan" : stage === "report" ? "research" : stage;
+    const els = scrollRef.current?.querySelectorAll(`[data-stage="${target}"]`);
+    if (!els || !els.length) return;
+    const el = (stage === "report" ? els[els.length - 1] : els[0]) as HTMLElement;
+    stickRef.current = false;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
 
   return (
     <div className="chat-wrap">
@@ -199,7 +208,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
         <FileOpenCtx.Provider value={openFile}>
         <div className="messages" ref={scrollRef} onScroll={onScroll}>
           <div className="messages-inner">
-            {isProject && project && <StageTracker project={project} live={!!activeRun} />}
+            {isProject && project && <StageTracker project={project} live={!!activeRun} onJump={jumpToStage} />}
             {shown.length === 0 && !activeRun && (
               isProject ? (
                 <div className="project-intro">
@@ -209,10 +218,10 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
               ) : (
                 <div className="examples">
                   <div className="examples-title">從一個問題開始</div>
-                  <div className="example-grid">
+                  <div className="example-list">
                     {EXAMPLES.map((ex) => (
                       <button key={ex.title} className="example" onClick={() => send(ex.text)}>
-                        <strong>{ex.title}</strong><span>{ex.text}</span>
+                        <span className="ex-t">{ex.title}</span><span className="ex-d">{ex.text}</span>
                       </button>
                     ))}
                   </div>
@@ -232,9 +241,9 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
                 );
               }
               return (
-                <div key={`a${it.id}`} className="msg assistant">
+                <div key={`a${it.id}`} className="msg assistant" data-stage={ann.stages[it.id]}>
                   <AssistantTurn blocks={it.blocks} attachments={it.attachments} threadId={threadId} run={runById[it.run_id]}
-                    roleLabel={labels[it.id]} selectedId={selected?.id} onSelect={openStep} onOpenFile={openFile} />
+                    roleLabel={ann.labels[it.id]} selectedId={selected?.id} onSelect={openStep} onOpenFile={openFile} />
                 </div>
               );
             })}

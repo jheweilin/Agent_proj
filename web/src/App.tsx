@@ -30,6 +30,15 @@ function groupThreads(ts: Thread[]) {
   return groups.filter(([, list]) => list.length);
 }
 
+const FLOW: [string, string, boolean?][] = [
+  ["釐清", "AI 把你的想法收斂成明確、可執行的問題"],
+  ["檢索證據", "程式自動查知識庫與文獻，整理成證據"],
+  ["規劃", "AI 依證據設計計畫，參數標明來源"],
+  ["核准", "你核准計畫，或退回並說明要改的地方", true],
+  ["研究", "AI 在沙盒裡動手做、驗證、交件"],
+  ["驗收", "你驗收結果，或退回重做", true],
+];
+
 const CAPS = [
   { icon: "◴", title: "九階段流程", text: "釐清、檢索證據、規劃、研究、驗證、審查——每一步看得到，計畫與結果由你把關" },
   { icon: "⌘", title: "GPU 沙盒", text: "每個對話一個獨立 Linux 環境（RTX 4070 Ti SUPER），寫程式、跑模擬、畫圖" },
@@ -109,28 +118,35 @@ export default function App() {
 
   return (
     <div className="layout">
-      <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
-        <div className="brand" onClick={() => { setCurrent(null); setSidebarOpen(false); }}>
-          <span className="logo" />
-          <div>
-            <div className="brand-name">{APP_NAME}</div>
-            <div className="brand-sub">可驗證的研究流程</div>
-          </div>
+      <header className="topbar">
+        <div className="brand" onClick={() => { setCurrent(null); setSidebarOpen(false); }} title="回首頁">
+          <span className="logo sm" />
+          <span className="brand-name">{APP_NAME}</span>
         </div>
+        <button className={`topbtn ${sidebarOpen ? "on" : ""}`} onClick={() => setSidebarOpen((v) => !v)}>
+          對話{threads.length ? <span className="muted"> {threads.length}</span> : null}
+        </button>
+        <span className="topdiv" />
         <div className="mode-seg" title="一般對話＝單一助理；研究專案＝釐清→規劃→核准→研究→驗收的九階段流程">
           <button className={newMode === "chat" ? "on" : ""} onClick={() => setNewMode("chat")}>一般對話</button>
           <button className={newMode === "project" ? "on" : ""} onClick={() => setNewMode("project")}>研究專案</button>
         </div>
-        <div className="new-chat">
-          <select className="domain-select" value={newDomain} title="選擇研究領域"
-                  onChange={(e) => setNewDomain(e.target.value)}>
-            {domainList.map((d) => <option key={d.name} value={d.name}>{d.label}</option>)}
-          </select>
-          <button className="btn primary block" onClick={() => newThread()}>
-            {newMode === "project" ? "＋ 新專案" : "＋ 新對話"}
-          </button>
+        <select className="domain-select" value={newDomain} title="選擇研究領域" onChange={(e) => setNewDomain(e.target.value)}>
+          {domainList.map((d) => <option key={d.name} value={d.name}>{d.label}</option>)}
+        </select>
+        <button className="btn primary small" onClick={() => newThread()}>{newMode === "project" ? "＋ 新專案" : "＋ 新研究"}</button>
+        <span className="spacer" />
+        <button className="topbtn" title="切換主題" onClick={() => setTheme(nextTheme[theme])}>{themeLabel[theme]}</button>
+        <span className="avatar user" title={`${user.name}\n${user.email}`}>{(user.name || user.email)[0]?.toUpperCase()}</span>
+        <button className="topbtn" title="登出" onClick={() => { setToken(null); setUser(null); setThreads([]); setCurrent(null); }}>登出</button>
+      </header>
+
+      {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} />}
+      <aside className={`drawer ${sidebarOpen ? "open" : ""}`}>
+        <div className="drawer-head">
+          <input className="search" placeholder="搜尋對話…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <button className="icon" onClick={() => setSidebarOpen(false)} aria-label="關閉">✕</button>
         </div>
-        <input className="search" placeholder="搜尋對話…" value={query} onChange={(e) => setQuery(e.target.value)} />
         <div className="thread-list">
           {threads.length === 0 && <div className="muted small pad">還沒有對話</div>}
           {groups.map(([label, list]) => (
@@ -151,40 +167,43 @@ export default function App() {
             </div>
           ))}
         </div>
-        <div className="user-box">
-          <span className="avatar user">{(user.name || user.email)[0]?.toUpperCase()}</span>
-          <div className="small user-info">{user.name}<div className="muted">{user.email}</div></div>
-          <button className="icon" title="切換主題" onClick={() => setTheme(nextTheme[theme])}>{themeLabel[theme]}</button>
-          <button className="icon" title="登出" onClick={() => { setToken(null); setUser(null); setThreads([]); setCurrent(null); }}>登出</button>
-        </div>
       </aside>
-      {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} />}
+
       <main className="main">
-        <button className="menu-btn" onClick={() => setSidebarOpen(true)} aria-label="開啟選單">☰</button>
         {current ? (
           <Chat key={current} threadId={current} onActivity={refreshThreads}
             initialPrompt={pending} onPromptUsed={() => setPending(null)} />
         ) : (
           <div className="welcome">
-            <div className="welcome-hero">
-              <span className="logo big" />
-              <h1>{APP_NAME}</h1>
-              <p className="lede">描述你的研究想法，它會走完釐清 → 檢索證據 → 規劃 →（你核准）→ 研究 →（你驗收）的流程，在 GPU 沙盒裡動手做，並交出可追溯的結果。</p>
-            </div>
-            <div className="cap-grid">
+            <header className="hero">
+              <div className="kicker">{APP_NAME}</div>
+              <h1 className="hero-title">把一個研究想法，<br />跑完一整套可驗證的流程。</h1>
+              <p className="lede">描述你的研究想法，它會走完釐清、檢索證據、規劃，交由你核准後在 GPU 沙盒裡動手做，驗證後再請你驗收。每一步都看得到，關鍵決策由你把關。</p>
+              <nav className="flow" aria-label="研究流程">
+                {FLOW.map(([s, tip, gate]) => (
+                  <span key={s} className={`flow-step${gate ? " gate" : ""}`} data-tip={tip}>{s}</span>
+                ))}
+              </nav>
+              <button className="btn primary lg" onClick={() => newThread()}>開始新研究</button>
+            </header>
+            <section className="caps">
               {CAPS.map((c) => (
-                <div key={c.title} className="cap"><span className="cap-icon">{c.icon}</span><strong>{c.title}</strong><span className="muted small">{c.text}</span></div>
+                <div key={c.title} className="cap-row">
+                  <div className="cap-k">{c.title}</div>
+                  <div className="cap-v">{c.text}</div>
+                </div>
               ))}
-            </div>
-            <div className="examples-title">試試這些問題</div>
-            <div className="example-grid">
-              {EXAMPLES.map((ex) => (
-                <button key={ex.title} className="example" onClick={() => newThread(ex.text, "plasma", "chat")}>
-                  <strong>{ex.title}</strong><span>{ex.text}</span>
-                </button>
-              ))}
-            </div>
-            <button className="btn primary" onClick={() => newThread()}>開始新對話</button>
+            </section>
+            <section className="examples">
+              <div className="examples-title">試試這些問題</div>
+              <div className="example-list">
+                {EXAMPLES.map((ex) => (
+                  <button key={ex.title} className="example" onClick={() => newThread(ex.text, "plasma", "chat")}>
+                    <span className="ex-t">{ex.title}</span><span className="ex-d">{ex.text}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
           </div>
         )}
       </main>
