@@ -62,6 +62,64 @@ def _dump_blocks(content) -> list[dict]:
     return [b.model_dump(mode="json", exclude_none=True) for b in content]
 
 
+def _block_chars(b: dict) -> int:
+    t = b.get("type")
+    if t == "thinking":
+        return len(b.get("thinking", "") or "")
+    if t == "text":
+        return len(b.get("text", "") or "")
+    if t == "tool_use":
+        return len(json.dumps(b.get("input", {}), ensure_ascii=False))
+    if t == "image" or (t == "tool_result" and isinstance(b.get("content"), list)
+                        and any(x.get("type") == "image" for x in b["content"] if isinstance(x, dict))):
+        return 2000  # a resized image is roughly this many tokens; count it so it can be trimmed
+    if t == "tool_result":
+        c = b.get("content")
+        return len(c) if isinstance(c, str) else sum(len(x.get("text", "")) for x in c if isinstance(x, dict))
+    return 0
+
+
+def _fit_context(messages: list[dict]) -> list[dict]:
+    """Keep the request under the context budget by trimming older TOOL RESULTS only.
+
+    Tool results are user-role blocks with no signatures, so shortening them is safe — unlike
+    thinking blocks (bound to the prompt) or assistant text, which we never touch. The last few
+    turns are kept verbatim; earlier bulky tool outputs/images are collapsed to a short note.
+    """
+    budget = settings.max_context_chars
+    total = sum(_block_chars(b) for m in messages for b in m["content"])
+    if total <= budget:
+        return messages
+    out = list(messages)
+    protect = set(range(max(0, len(out) - 6), len(out)))  # keep the most recent 6 messages intact
+    cap = 800
+    for i in range(len(out)):
+        if total <= budget or i in protect:
+            continue
+        m = out[i]
+        new_blocks, changed = [], False
+        for b in m["content"]:
+            if b.get("type") == "tool_result":
+                before = _block_chars(b)
+                c = b.get("content")
+                s = c if isinstance(c, str) else "\n".join(
+                    x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text")
+                if before > cap:
+                    nb = dict(b)
+                    nb["content"] = (s[:cap] + " …[較早步驟的輸出已省略以節省長度]") if s else "[較早步驟的輸出已省略]"
+                    nb.pop("is_error", None)
+                    new_blocks.append(nb)
+                    total -= before - len(nb["content"])
+                    changed = True
+                    continue
+            new_blocks.append(b)
+        if changed:
+            nm = dict(m)
+            nm["content"] = new_blocks
+            out[i] = nm
+    return out
+
+
 async def _save_message(thread_id: uuid.UUID, run_id: uuid.UUID, role: str, content: list[dict]) -> None:
     async with SessionLocal() as s:
         s.add(Message(thread_id=thread_id, run_id=run_id, role=role, content=content))
@@ -141,6 +199,7 @@ class Runner:
             thinking["block_binding"] = {"prefix_mismatch_behavior": "drop_block"}
         if self.strip_thinking:
             messages = _without_thinking(messages)
+        messages = _fit_context(messages)  # trim older tool outputs if the history is too large
         tool_defs = tools.definitions(self._tool_allow)
         kwargs = dict(
             model=self.model,

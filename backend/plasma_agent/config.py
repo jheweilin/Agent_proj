@@ -37,6 +37,8 @@ class Settings:
     effort: str = field(default_factory=lambda: _env("EFFORT", "medium"))
     max_tokens: int = field(default_factory=lambda: _int("MAX_TOKENS", 64000))
     max_iterations: int = field(default_factory=lambda: _int("MAX_ITERATIONS", 100))
+    # when the request history grows past this (chars ≈ 4×tokens), trim older tool outputs
+    max_context_chars: int = field(default_factory=lambda: _int("MAX_CONTEXT_CHARS", 700000))
 
     # --- domains (one engine, pluggable research domains; see domains.py) ---
     default_domain: str = field(default_factory=lambda: _env("DEFAULT_DOMAIN", "plasma"))

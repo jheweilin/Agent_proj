@@ -12,7 +12,7 @@ const VERIF = "驗證 · Verifier", REPLIC = "第二實作 · Replicator", REVIE
 const STAGE_OF: Record<string, string> = {
   [CLAR]: "clarify", [PLAN]: "plan", [RES]: "research", [VERIF]: "verify", [REPLIC]: "replicate", [REVIEW]: "review",
 };
-const NOTE_STAGE: Record<string, string> = { reject_plan: CLAR, verify: VERIF, replicate: REPLIC, review: REVIEW };
+const NOTE_STAGE: Record<string, string> = { reject_plan: CLAR, verify: VERIF, replicate: REPLIC, review: REVIEW, verify_fail: RES };
 
 // who runs each stage + a one-line description, shown on hover
 const STAGE_META: Record<string, { who: string; desc: string }> = {
@@ -152,13 +152,14 @@ const NOTE_LABEL: Record<string, string> = {
   reject_plan: "計畫退回 — 重新釐清與規劃",
   reject_accept: "結果退回 — 重做研究",
   verify: "開始獨立驗證",
+  verify_fail: "驗證沒過 — 退回研究修正",
   replicate: "開始獨立複現",
   review: "開始唯讀審查",
 };
 
 export function PipelineNote({ note, body }: { note: string; body: string }) {
   const fb = body.replace(/^（[^：]*：?/, "").replace(/）\s*$/, "").trim();
-  const isReject = note.startsWith("reject");
+  const isReject = note.startsWith("reject") || note === "verify_fail";
   return (
     <div className={`pipe-note ${isReject ? "reject" : "ok"}`}>
       <span className="pipe-line" />

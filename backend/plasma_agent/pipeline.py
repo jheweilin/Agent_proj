@@ -226,6 +226,25 @@ async def _get_card(thread_id) -> dict:
         return dict(p.card or {}) if p else {}
 
 
+MAX_VERIFY_RETRIES = 1
+
+
+async def _should_retry_research(outer) -> bool:
+    """Retry edge ⑥→⑤: if verification failed, loop back to research with the findings (bounded)."""
+    verdict = _read_json(outer.thread.id, "verification.json")
+    if not verdict or verdict.get("overall_passed"):
+        return False
+    retries = int((await _get_card(outer.thread.id)).get("verify_retries", 0))
+    if retries >= MAX_VERIFY_RETRIES:
+        return False   # give up auto-retrying; let the human decide at the acceptance gate
+    await _set_card(outer.thread.id, verify_retries=retries + 1)
+    fails = [c for c in verdict.get("checks", []) if not c.get("passed")]
+    detail = "\n".join(f"- {c.get('name')}：{c.get('detail')}" for c in fails) or verdict.get("summary", "")
+    await agent._save_message(outer.thread.id, outer.run.id, "user", [{"type": "text", "text": _note("verify_fail") +
+        "\n（獨立驗證沒通過，請針對下列問題修正後重新交件；修正後會再自動驗證一次。）\n\n" + detail}])
+    return True
+
+
 async def _record_run_stage(run_id: uuid.UUID, stage: str) -> None:
     async with SessionLocal() as s:
         r = await s.get(Run, run_id)
@@ -261,7 +280,10 @@ async def advance(run: Run, thread, user, domain, outer) -> str:
             await _set(thread.id, stage, "running", outer)
         elif stage == "verify":
             await _verify(outer)          # ⑥ independent verification
-            stage = "replicate"
+            if await _should_retry_research(outer):   # ⑥→⑤: failed verification loops back to research
+                stage = "research"
+            else:
+                stage = "replicate"
             await _set(thread.id, stage, "running", outer)
         elif stage == "replicate":
             await _replicate(outer)       # ⑦ independent replication (isolated context)
@@ -306,6 +328,7 @@ async def approve(thread) -> dict:
             await _append_user(thread.id, run.id,
                                _note("approved_plan") + "\n（使用者已核准計畫，請嚴格依計畫開始執行研究。）")
             p.stage, p.status = "research", "running"
+            p.card = {**(p.card or {}), "verify_retries": 0}   # fresh research cycle
             await s.commit()
             await events.enqueue_run(str(run.id))
             return {"ok": True, "stage": "research", "status": "running", "run_id": str(run.id)}
@@ -340,6 +363,7 @@ async def reject(thread, feedback: str) -> dict:
             await _append_user(thread.id, run.id, _note("reject_accept") +
                                f"\n（使用者不接受結果，請依意見修正後重做研究。意見：{fb or '未提供，請自行檢討結果的弱點'}）")
             p.stage, p.status = "research", "running"
+            p.card = {**(p.card or {}), "verify_retries": 0}   # fresh research cycle
             await s.commit()
             await events.enqueue_run(str(run.id))
             return {"ok": True, "stage": "research", "status": "running", "run_id": str(run.id)}

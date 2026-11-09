@@ -198,7 +198,7 @@ export default function App() {
               <div className="examples-title">試試這些問題</div>
               <div className="example-list">
                 {EXAMPLES.map((ex) => (
-                  <button key={ex.title} className="example" onClick={() => newThread(ex.text, "plasma", "chat")}>
+                  <button key={ex.title} className="example" onClick={() => newThread(ex.text, ex.domain, "chat")}>
                     <span className="ex-t">{ex.title}</span><span className="ex-d">{ex.text}</span>
                   </button>
                 ))}

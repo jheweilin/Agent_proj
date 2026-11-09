@@ -12,10 +12,10 @@ type Live = {
 const emptyLive = (): Live => ({ blocks: [], attachments: [], status: "", error: "", iteration: 0, usage: {}, model: "", startedAt: Date.now(), stage: "" });
 
 export const EXAMPLES = [
-  { title: "電漿參數", text: "用 PlasmaPy 計算氬氣電漿在 n=1e17 m⁻³、Te=3 eV 下的 Debye 長度、電漿頻率與每個 Debye 球內的粒子數，並和解析公式比對" },
-  { title: "PIC 模擬", text: "用 SMILEI 設定一個 1D 雙流不穩定性（two-stream instability）的小型 PIC 模擬，跑完畫出相空間圖並和線性理論成長率比較" },
-  { title: "COMSOL 模型", text: "用 COMSOL 建立一個簡單的 2D 平行板電極靜電模型，算出中間的電位分布並和解析解比較" },
-  { title: "文獻調查", text: "搜尋近三年關於大氣壓電漿噴流（atmospheric pressure plasma jet）數值模擬的代表性論文並整理重點" },
+  { title: "數值方法", domain: "general", text: "用 RK4 與 SciPy 的 RK45 解 Lorenz 系統，在相同容差下比較兩者的精度與步數，畫出軌跡與誤差隨時間的變化" },
+  { title: "資料擬合", domain: "general", text: "產生一組帶雜訊的指數衰減數據，用非線性最小二乘擬合出衰減常數並估計其不確定度，附上殘差圖" },
+  { title: "電漿參數", domain: "plasma", text: "用 PlasmaPy 計算氬氣電漿在 n=1e17 m⁻³、Te=3 eV 下的 Debye 長度、電漿頻率與每個 Debye 球內的粒子數，並和解析公式比對" },
+  { title: "COMSOL 模型", domain: "plasma", text: "用 COMSOL 建立一個簡單的 2D 平行板電極靜電模型，算出中間的電位分布並和解析解比較" },
 ];
 
 export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed }: {
