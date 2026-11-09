@@ -555,6 +555,43 @@ async def upload(thread_id: str, files: list[UploadFile] = File(...), user: User
     return {"paths": saved, "kb": ingested}
 
 
+# ------------------------------------------------------------------ shared base knowledge library
+
+@app.get("/api/kb/base")
+async def kb_base_list(user: User = Depends(current_user)):
+    if not kb.enabled():
+        return {"enabled": False, "documents": []}
+    return {"enabled": True, "documents": await kb.list_documents(await kb.base_dataset_id())}
+
+
+@app.post("/api/kb/base/upload")
+async def kb_base_upload(files: list[UploadFile] = File(...), user: User = Depends(current_user)):
+    """Add documents to the shared base library (searchable from every project)."""
+    if not kb.enabled():
+        raise HTTPException(400, "知識庫未啟用（缺少 VOYAGE_API_KEY）")
+    import tempfile
+    dsid = await kb.base_dataset_id()
+    ingested = []
+    for f in files:
+        name = Path(f.filename or "file").name
+        data = await f.read()
+        with tempfile.NamedTemporaryFile(suffix="_" + name, delete=False) as tmp:
+            tmp.write(data)
+            path = Path(tmp.name)
+        try:
+            ingested.append(await kb.ingest_file(dsid, path, source=name))
+        finally:
+            path.unlink(missing_ok=True)
+    return {"ingested": ingested}
+
+
+@app.delete("/api/kb/base/documents/{doc_id}")
+async def kb_base_delete(doc_id: str, user: User = Depends(current_user)):
+    if not await kb.delete_document(doc_id):
+        raise HTTPException(404, "找不到文件")
+    return {"ok": True}
+
+
 # ------------------------------------------------------------------ web UI
 
 if settings.static_dir.is_dir():

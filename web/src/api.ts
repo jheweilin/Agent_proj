@@ -40,6 +40,7 @@ export type ThreadStatus = {
   kb?: { docs: number; chunks: number } | null;
 };
 export type FileEntry = { name: string; path: string; dir: boolean; size: number; mtime: number };
+export type KbDoc = { id: string; source: string; chunks: number; created_at: string };
 
 export type ProjectStage = { name: string; label: string };
 export type Grade = { level: string; passed: number; total: number; summary: string };
@@ -114,6 +115,13 @@ export const api = {
     files.forEach((f) => fd.append("files", f));
     return req<{ paths: string[] }>("POST", `/api/threads/${id}/upload`, fd, true);
   },
+  kbBase: () => req<{ enabled: boolean; documents: KbDoc[] }>("GET", "/api/kb/base"),
+  kbBaseUpload: (files: File[]) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append("files", f));
+    return req<{ ingested: { source: string; chunks: number }[] }>("POST", "/api/kb/base/upload", fd, true);
+  },
+  kbBaseDelete: (id: string) => req<{ ok: boolean }>("DELETE", `/api/kb/base/documents/${id}`),
 };
 
 export function fileUrl(threadId: string, path: string, download = false) {

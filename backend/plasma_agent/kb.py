@@ -184,6 +184,33 @@ async def read_document(dataset_ids: list[uuid.UUID], source: str, max_chars: in
     return body if len(body) <= max_chars else body[:max_chars] + "\n…（截斷）"
 
 
+async def base_dataset_id() -> uuid.UUID:
+    """The shared base library — searchable from every thread (see datasets_for_thread)."""
+    return await get_or_create_dataset(None, category="base", name="基礎庫")
+
+
+async def list_documents(dataset_id) -> list[dict]:
+    async with SessionLocal() as s:
+        rows = (await s.execute(select(KbDocument).where(KbDocument.dataset_id == dataset_id)
+                                .order_by(KbDocument.created_at.desc()))).scalars().all()
+    return [{"id": str(d.id), "source": d.source, "chunks": d.n_chunks,
+             "created_at": d.created_at.isoformat()} for d in rows]
+
+
+async def delete_document(doc_id: str) -> bool:
+    async with SessionLocal() as s:
+        try:
+            d = await s.get(KbDocument, uuid.UUID(doc_id))
+        except ValueError:
+            return False
+        if d is None:
+            return False
+        await s.execute(delete(KbChunk).where(KbChunk.document_id == d.id))
+        await s.delete(d)
+        await s.commit()
+    return True
+
+
 async def thread_stats(thread_id) -> dict:
     async with SessionLocal() as s:
         ds = (await s.execute(select(KbDataset.id).where(KbDataset.thread_id == thread_id,

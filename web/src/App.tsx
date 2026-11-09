@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getToken, setToken, DomainChoice, Thread, User } from "./api";
 import { APP_NAME } from "./brand";
 import Chat, { EXAMPLES } from "./Chat";
+import KbLibrary from "./KbLibrary";
 import Login from "./Login";
 
 type Theme = "auto" | "light" | "dark";
@@ -59,6 +60,7 @@ export default function App() {
     [{ name: "plasma", label: "電漿物理" }, { name: "general", label: "通用研究" }]);
   const [newDomain, setNewDomain] = useState("plasma");
   const [newMode, setNewMode] = useState("chat");
+  const [kbOpen, setKbOpen] = useState(false);
 
   useEffect(() => {
     if (!getToken()) { setChecking(false); return; }
@@ -136,6 +138,7 @@ export default function App() {
         </select>
         <button className="btn primary small" onClick={() => newThread()}>{newMode === "project" ? "＋ 新專案" : "＋ 新研究"}</button>
         <span className="spacer" />
+        <button className="topbtn" title="共用基礎知識庫" onClick={() => setKbOpen(true)}>基礎庫</button>
         <button className="topbtn" title="切換主題" onClick={() => setTheme(nextTheme[theme])}>{themeLabel[theme]}</button>
         <span className="avatar user" title={`${user.name}\n${user.email}`}>{(user.name || user.email)[0]?.toUpperCase()}</span>
         <button className="topbtn" title="登出" onClick={() => { setToken(null); setUser(null); setThreads([]); setCurrent(null); }}>登出</button>
@@ -207,6 +210,7 @@ export default function App() {
           </div>
         )}
       </main>
+      {kbOpen && <KbLibrary onClose={() => setKbOpen(false)} />}
     </div>
   );
 }
