@@ -13,6 +13,21 @@ from .config import settings
 from .db import User, get_session
 
 
+def is_admin_email(email: str) -> bool:
+    return (email or "").strip().lower() in settings.admin_emails
+
+
+def is_faculty_email(email: str) -> bool:
+    return (email or "").strip().lower() in settings.faculty_emails
+
+
+def identity_flags(user: User) -> dict:
+    """Admin/faculty status. Admin always follows ADMIN_EMAILS; faculty follows FACULTY_EMAILS
+    OR the stored column (set at register/login now, by the nid API in the future)."""
+    return {"is_admin": is_admin_email(user.email),
+            "is_faculty": bool(getattr(user, "is_faculty", False)) or is_faculty_email(user.email)}
+
+
 def hash_password(pw: str) -> str:
     return bcrypt.hashpw(pw.encode()[:72], bcrypt.gensalt()).decode()
 
@@ -48,4 +63,10 @@ async def current_user(request: Request, token: str | None = Query(default=None)
     user = await session.get(User, uid)
     if user is None:
         raise HTTPException(401, "帳號不存在")
+    return user
+
+
+async def require_admin(user: User = Depends(current_user)) -> User:
+    if not is_admin_email(user.email):
+        raise HTTPException(403, "只有管理員可以管理共用基礎庫")
     return user

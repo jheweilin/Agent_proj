@@ -1,5 +1,10 @@
-export type User = { id: string; email: string; name: string };
+export type User = { id: string; email: string; name: string; is_admin: boolean; is_faculty: boolean };
 export type DomainChoice = { name: string; label: string };
+export type LabMember = { user_id: string; name: string; email: string; role: string };
+export type Lab = {
+  id: string; name: string; role: string; owner_id: string; created_at: string;
+  join_code?: string; member_count?: number; members?: LabMember[];
+};
 export type Thread = { id: string; title: string; domain: string; mode: string; created_at: string; updated_at: string; active_run_id: string | null };
 
 export type ToolResult = {
@@ -115,13 +120,29 @@ export const api = {
     files.forEach((f) => fd.append("files", f));
     return req<{ paths: string[] }>("POST", `/api/threads/${id}/upload`, fd, true);
   },
-  kbBase: () => req<{ enabled: boolean; documents: KbDoc[] }>("GET", "/api/kb/base"),
+  kbBase: () => req<{ enabled: boolean; can_manage: boolean; documents: KbDoc[] }>("GET", "/api/kb/base"),
   kbBaseUpload: (files: File[]) => {
     const fd = new FormData();
     files.forEach((f) => fd.append("files", f));
     return req<{ ingested: { source: string; chunks: number }[] }>("POST", "/api/kb/base/upload", fd, true);
   },
   kbBaseDelete: (id: string) => req<{ ok: boolean }>("DELETE", `/api/kb/base/documents/${id}`),
+
+  labs: () => req<{ labs: Lab[]; can_create: boolean }>("GET", "/api/labs"),
+  createLab: (name: string) => req<Lab>("POST", "/api/labs", { name }),
+  joinLab: (join_code: string) => req<Lab>("POST", "/api/labs/join", { join_code }),
+  lab: (id: string) => req<Lab>("GET", `/api/labs/${id}`),
+  addLabMember: (id: string, email: string) => req<{ ok: boolean }>("POST", `/api/labs/${id}/members`, { email }),
+  removeLabMember: (id: string, memberId: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/labs/${id}/members/${memberId}`),
+  regenLabCode: (id: string) => req<{ join_code: string }>("POST", `/api/labs/${id}/regenerate-code`),
+  labKb: (id: string) => req<{ enabled: boolean; documents: KbDoc[] }>("GET", `/api/labs/${id}/kb`),
+  labKbUpload: (id: string, files: File[]) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append("files", f));
+    return req<{ ingested: { source: string; chunks: number }[] }>("POST", `/api/labs/${id}/kb/upload`, fd, true);
+  },
+  labKbDelete: (id: string, docId: string) => req<{ ok: boolean }>("DELETE", `/api/labs/${id}/kb/documents/${docId}`),
 };
 
 export function fileUrl(threadId: string, path: string, download = false) {

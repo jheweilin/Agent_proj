@@ -5,7 +5,8 @@ import uuid
 from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import (BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text,
+                        UniqueConstraint, func)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -27,6 +28,9 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(200), default="")
     password_hash: Mapped[str] = mapped_column(String(200))
+    # faculty (教職員) may create/own labs. Backfilled from FACULTY_EMAILS at login/register now;
+    # a future nid identity API will set this at login instead. See auth.identity_flags.
+    is_faculty: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -94,13 +98,41 @@ class Run(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class Lab(Base):
+    """A research lab (實驗室). Owned by a faculty member; its KB is shared among members only."""
+    __tablename__ = "labs"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(300), default="")
+    owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True),
+                                                ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    join_code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class LabMember(Base):
+    """Membership of a user in a lab. `role`: owner | member."""
+    __tablename__ = "lab_members"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    lab_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True),
+                                              ForeignKey("labs.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True),
+                                               ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(20), default="member")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (UniqueConstraint("lab_id", "user_id", name="uq_lab_member"),)
+
+
 class KbDataset(Base):
-    """A knowledge-base collection. `category`: task (bound to one thread), base (shared), lab (restricted)."""
+    """A knowledge-base collection. `category`: task (bound to one thread), base (shared), lab (per-lab)."""
     __tablename__ = "kb_datasets"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     owner_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     thread_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True),
                                                         ForeignKey("threads.id", ondelete="CASCADE"), nullable=True, index=True)
+    # for category=="lab": the lab this dataset belongs to (null for task/base)
+    lab_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True),
+                                                     ForeignKey("labs.id", ondelete="CASCADE"), nullable=True, index=True)
     category: Mapped[str] = mapped_column(String(20), default="task")
     name: Mapped[str] = mapped_column(String(300), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -151,6 +183,10 @@ async def init_db() -> None:
             "ALTER TABLE threads ADD COLUMN IF NOT EXISTS mode VARCHAR(20) NOT NULL DEFAULT 'chat'")
         await conn.exec_driver_sql(
             "ALTER TABLE runs ADD COLUMN IF NOT EXISTS stage VARCHAR(40)")
+        await conn.exec_driver_sql(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_faculty BOOLEAN NOT NULL DEFAULT false")
+        await conn.exec_driver_sql(
+            "ALTER TABLE kb_datasets ADD COLUMN IF NOT EXISTS lab_id UUID")
 
 
 async def get_session():
@@ -158,5 +194,6 @@ async def get_session():
         yield session
 
 
-__all__ = ["Base", "User", "Thread", "Message", "Project", "Run", "KbDataset", "KbDocument", "KbChunk",
+__all__ = ["Base", "User", "Thread", "Message", "Project", "Run", "Lab", "LabMember",
+           "KbDataset", "KbDocument", "KbChunk",
            "SessionLocal", "engine", "init_db", "get_session", "utcnow", "func"]

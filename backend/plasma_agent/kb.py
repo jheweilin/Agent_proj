@@ -12,10 +12,10 @@ import uuid
 from pathlib import Path
 
 import httpx
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, or_, select, text
 
 from .config import settings
-from .db import KbChunk, KbDataset, KbDocument, SessionLocal
+from .db import KbChunk, KbDataset, KbDocument, LabMember, SessionLocal, Thread
 
 log = logging.getLogger("plasma_agent.kb")
 VOYAGE = "https://api.voyageai.com/v1"
@@ -87,13 +87,20 @@ def extract_text(path: Path) -> str:
     return ""  # unsupported type (image, binary, …): nothing to index
 
 
-async def get_or_create_dataset(thread_id, owner_id=None, category: str = "task", name: str = "") -> uuid.UUID:
+async def get_or_create_dataset(thread_id, owner_id=None, category: str = "task", name: str = "",
+                                lab_id=None) -> uuid.UUID:
     async with SessionLocal() as s:
         q = select(KbDataset).where(KbDataset.category == category)
-        q = q.where(KbDataset.thread_id == thread_id) if category == "task" else q.where(KbDataset.thread_id.is_(None))
+        if category == "task":
+            q = q.where(KbDataset.thread_id == thread_id)
+        elif category == "lab":
+            q = q.where(KbDataset.lab_id == lab_id)
+        else:  # base: the single shared dataset
+            q = q.where(KbDataset.thread_id.is_(None), KbDataset.lab_id.is_(None))
         ds = (await s.execute(q)).scalars().first()
         if ds is None:
             ds = KbDataset(thread_id=thread_id if category == "task" else None,
+                           lab_id=lab_id if category == "lab" else None,
                            owner_id=owner_id, category=category, name=name or category)
             s.add(ds)
             await s.commit()
@@ -137,11 +144,24 @@ async def _to_thread_extract(path: Path) -> str:
 
 
 async def datasets_for_thread(thread_id) -> list[uuid.UUID]:
-    """Datasets visible to a thread: its own task dataset + any shared base datasets."""
+    """Datasets visible to a thread: its own task dataset, the shared base library, and the
+    lab libraries of every lab the thread's owner belongs to."""
     async with SessionLocal() as s:
-        rows = (await s.execute(select(KbDataset.id).where(
-            (KbDataset.thread_id == thread_id) | (KbDataset.category == "base")))).scalars().all()
+        owner = (await s.execute(select(Thread.user_id).where(Thread.id == thread_id))).scalar_one_or_none()
+        lab_ids: list[uuid.UUID] = []
+        if owner is not None:
+            lab_ids = list((await s.execute(
+                select(LabMember.lab_id).where(LabMember.user_id == owner))).scalars().all())
+        conds = [KbDataset.thread_id == thread_id, KbDataset.category == "base"]
+        if lab_ids:
+            conds.append((KbDataset.category == "lab") & (KbDataset.lab_id.in_(lab_ids)))
+        rows = (await s.execute(select(KbDataset.id).where(or_(*conds)))).scalars().all()
     return list(rows)
+
+
+async def lab_dataset_id(lab_id, name: str = "") -> uuid.UUID:
+    """The KB dataset for one lab — searchable only from threads owned by its members."""
+    return await get_or_create_dataset(None, category="lab", lab_id=lab_id, name=name or "實驗室庫")
 
 
 async def search(dataset_ids: list[uuid.UUID], query: str, top_k: int = 5, pool: int = 30) -> list[dict]:
@@ -197,13 +217,15 @@ async def list_documents(dataset_id) -> list[dict]:
              "created_at": d.created_at.isoformat()} for d in rows]
 
 
-async def delete_document(doc_id: str) -> bool:
+async def delete_document(doc_id: str, dataset_id=None) -> bool:
+    """Delete a document and its chunks. If `dataset_id` is given, only delete when the document
+    belongs to that dataset (so a lab member can't delete another collection's document by id)."""
     async with SessionLocal() as s:
         try:
             d = await s.get(KbDocument, uuid.UUID(doc_id))
         except ValueError:
             return False
-        if d is None:
+        if d is None or (dataset_id is not None and d.dataset_id != dataset_id):
             return False
         await s.execute(delete(KbChunk).where(KbChunk.document_id == d.id))
         await s.delete(d)

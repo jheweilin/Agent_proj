@@ -17,6 +17,11 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+def _csv(name: str) -> tuple[str, ...]:
+    """Comma-separated env var → tuple of lowercased, stripped, non-empty values."""
+    return tuple(p.strip().lower() for p in _env(name).split(",") if p.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     # --- database / queue ---
@@ -28,6 +33,10 @@ class Settings:
     jwt_secret: str = field(default_factory=lambda: _env("JWT_SECRET", "change-me"))
     jwt_ttl_hours: int = field(default_factory=lambda: _int("JWT_TTL_HOURS", 24 * 7))
     allow_registration: bool = field(default_factory=lambda: _env("ALLOW_REGISTRATION", "1") == "1")
+    # global admins (manage the shared base library); faculty (教職員) may create/own labs.
+    # Interim identity source until the nid API is wired in — see auth.identity_flags.
+    admin_emails: tuple[str, ...] = field(default_factory=lambda: _csv("ADMIN_EMAILS"))
+    faculty_emails: tuple[str, ...] = field(default_factory=lambda: _csv("FACULTY_EMAILS"))
 
     # --- LLM (Amazon Bedrock) ---
     aws_region: str = field(default_factory=lambda: _env("AWS_REGION", "ap-southeast-1"))

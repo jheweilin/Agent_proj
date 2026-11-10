@@ -16,11 +16,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import secrets
+
 from . import domains, events, kb, pipeline, sandbox
 from .agent import user_message_content
-from .auth import current_user, hash_password, make_token, verify_password
+from .auth import (current_user, hash_password, identity_flags, is_faculty_email, make_token,
+                   require_admin, verify_password)
 from .config import settings
-from .db import Message, Run, Thread, User, func, get_session, init_db, utcnow
+from .db import Lab, LabMember, Message, Run, Thread, User, func, get_session, init_db, utcnow
 from .tools.base import text_of
 
 ACTIVE = ("queued", "running")
@@ -49,7 +52,7 @@ class LoginIn(BaseModel):
 
 
 def _user_out(u: User) -> dict:
-    return {"id": str(u.id), "email": u.email, "name": u.name}
+    return {"id": str(u.id), "email": u.email, "name": u.name, **identity_flags(u)}
 
 
 @app.post("/api/auth/register")
@@ -61,7 +64,8 @@ async def register(body: RegisterIn, s: AsyncSession = Depends(get_session)):
         raise HTTPException(400, "Email 格式不正確")
     if (await s.execute(select(User).where(User.email == email))).scalar_one_or_none():
         raise HTTPException(409, "這個 Email 已經註冊過")
-    u = User(email=email, name=body.name.strip() or email.split("@")[0], password_hash=hash_password(body.password))
+    u = User(email=email, name=body.name.strip() or email.split("@")[0], password_hash=hash_password(body.password),
+             is_faculty=is_faculty_email(email))
     s.add(u)
     await s.commit()
     return {"token": make_token(u), "user": _user_out(u)}
@@ -72,6 +76,10 @@ async def login(body: LoginIn, s: AsyncSession = Depends(get_session)):
     u = (await s.execute(select(User).where(User.email == body.email.strip().lower()))).scalar_one_or_none()
     if u is None or not verify_password(body.password, u.password_hash):
         raise HTTPException(401, "Email 或密碼錯誤")
+    # keep the faculty flag in sync with FACULTY_EMAILS (future: set from the nid identity API)
+    if is_faculty_email(u.email) and not u.is_faculty:
+        u.is_faculty = True
+        await s.commit()
     return {"token": make_token(u), "user": _user_out(u)}
 
 
@@ -557,20 +565,9 @@ async def upload(thread_id: str, files: list[UploadFile] = File(...), user: User
 
 # ------------------------------------------------------------------ shared base knowledge library
 
-@app.get("/api/kb/base")
-async def kb_base_list(user: User = Depends(current_user)):
-    if not kb.enabled():
-        return {"enabled": False, "documents": []}
-    return {"enabled": True, "documents": await kb.list_documents(await kb.base_dataset_id())}
-
-
-@app.post("/api/kb/base/upload")
-async def kb_base_upload(files: list[UploadFile] = File(...), user: User = Depends(current_user)):
-    """Add documents to the shared base library (searchable from every project)."""
-    if not kb.enabled():
-        raise HTTPException(400, "知識庫未啟用（缺少 VOYAGE_API_KEY）")
+async def _ingest_uploads(dsid, files: list[UploadFile]) -> list[dict]:
+    """Save each upload to a temp file and ingest it into `dsid`. Shared by base + lab uploads."""
     import tempfile
-    dsid = await kb.base_dataset_id()
     ingested = []
     for f in files:
         name = Path(f.filename or "file").name
@@ -582,12 +579,185 @@ async def kb_base_upload(files: list[UploadFile] = File(...), user: User = Depen
             ingested.append(await kb.ingest_file(dsid, path, source=name))
         finally:
             path.unlink(missing_ok=True)
-    return {"ingested": ingested}
+    return ingested
+
+
+@app.get("/api/kb/base")
+async def kb_base_list(user: User = Depends(current_user)):
+    if not kb.enabled():
+        return {"enabled": False, "documents": [], "can_manage": False}
+    return {"enabled": True, "can_manage": identity_flags(user)["is_admin"],
+            "documents": await kb.list_documents(await kb.base_dataset_id())}
+
+
+@app.post("/api/kb/base/upload")
+async def kb_base_upload(files: list[UploadFile] = File(...), user: User = Depends(require_admin)):
+    """Add documents to the shared base library (searchable from every project). Admin only."""
+    if not kb.enabled():
+        raise HTTPException(400, "知識庫未啟用（缺少 VOYAGE_API_KEY）")
+    return {"ingested": await _ingest_uploads(await kb.base_dataset_id(), files)}
 
 
 @app.delete("/api/kb/base/documents/{doc_id}")
-async def kb_base_delete(doc_id: str, user: User = Depends(current_user)):
-    if not await kb.delete_document(doc_id):
+async def kb_base_delete(doc_id: str, user: User = Depends(require_admin)):
+    if not await kb.delete_document(doc_id, dataset_id=await kb.base_dataset_id()):
+        raise HTTPException(404, "找不到文件")
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ labs (實驗室) + per-lab KB
+
+def _lab_out(lab: Lab, role: str, member_count: int | None = None) -> dict:
+    out = {"id": str(lab.id), "name": lab.name, "role": role, "owner_id": str(lab.owner_id),
+           "created_at": lab.created_at.isoformat()}
+    if role == "owner":
+        out["join_code"] = lab.join_code  # only the owner sees/shares the join code
+    if member_count is not None:
+        out["member_count"] = member_count
+    return out
+
+
+async def _membership(lab_id: str, user: User, s: AsyncSession) -> tuple[Lab, LabMember]:
+    """Return (lab, membership) or 404/403 — a non-member must not learn a lab exists."""
+    try:
+        lid = uuid.UUID(lab_id)
+    except ValueError:
+        raise HTTPException(404, "找不到實驗室")
+    lab = await s.get(Lab, lid)
+    m = (await s.execute(select(LabMember).where(LabMember.lab_id == lid,
+                                                 LabMember.user_id == user.id))).scalar_one_or_none()
+    if lab is None or m is None:
+        raise HTTPException(404, "找不到實驗室")
+    return lab, m
+
+
+class LabIn(BaseModel):
+    name: str = Field(min_length=1, max_length=300)
+
+
+class JoinIn(BaseModel):
+    join_code: str = Field(min_length=1, max_length=32)
+
+
+class MemberIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+
+
+@app.get("/api/labs")
+async def list_labs(user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    rows = (await s.execute(select(Lab, LabMember.role).join(LabMember, LabMember.lab_id == Lab.id)
+                            .where(LabMember.user_id == user.id).order_by(Lab.created_at))).all()
+    out = []
+    for lab, role in rows:
+        n = (await s.execute(select(func.count()).select_from(LabMember)
+                             .where(LabMember.lab_id == lab.id))).scalar_one()
+        out.append(_lab_out(lab, role, member_count=n))
+    return {"labs": out, "can_create": identity_flags(user)["is_faculty"]}
+
+
+@app.post("/api/labs")
+async def create_lab(body: LabIn, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    if not identity_flags(user)["is_faculty"]:
+        raise HTTPException(403, "只有教職員可以建立實驗室")
+    lab = Lab(name=body.name.strip(), owner_id=user.id, join_code=secrets.token_urlsafe(6))
+    s.add(lab)
+    await s.flush()
+    s.add(LabMember(lab_id=lab.id, user_id=user.id, role="owner"))
+    await s.commit()
+    return _lab_out(lab, "owner", member_count=1)
+
+
+@app.post("/api/labs/join")
+async def join_lab(body: JoinIn, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    lab = (await s.execute(select(Lab).where(Lab.join_code == body.join_code.strip()))).scalar_one_or_none()
+    if lab is None:
+        raise HTTPException(404, "加入碼無效")
+    exists = (await s.execute(select(LabMember).where(LabMember.lab_id == lab.id,
+                                                      LabMember.user_id == user.id))).scalar_one_or_none()
+    if exists is None:
+        s.add(LabMember(lab_id=lab.id, user_id=user.id, role="member"))
+        await s.commit()
+    return _lab_out(lab, exists.role if exists else "member")
+
+
+@app.get("/api/labs/{lab_id}")
+async def lab_detail(lab_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    lab, m = await _membership(lab_id, user, s)
+    rows = (await s.execute(select(LabMember, User).join(User, User.id == LabMember.user_id)
+                            .where(LabMember.lab_id == lab.id).order_by(LabMember.created_at))).all()
+    members = [{"user_id": str(u.id), "name": u.name, "email": u.email, "role": lm.role} for lm, u in rows]
+    return {**_lab_out(lab, m.role, member_count=len(members)), "members": members}
+
+
+@app.post("/api/labs/{lab_id}/members")
+async def add_lab_member(lab_id: str, body: MemberIn, user: User = Depends(current_user),
+                         s: AsyncSession = Depends(get_session)):
+    lab, m = await _membership(lab_id, user, s)
+    if m.role != "owner":
+        raise HTTPException(403, "只有實驗室負責人可以新增成員")
+    target = (await s.execute(select(User).where(User.email == body.email.strip().lower()))).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(404, "這個 Email 還沒有註冊帳號")
+    exists = (await s.execute(select(LabMember).where(LabMember.lab_id == lab.id,
+                                                      LabMember.user_id == target.id))).scalar_one_or_none()
+    if exists is None:
+        s.add(LabMember(lab_id=lab.id, user_id=target.id, role="member"))
+        await s.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/labs/{lab_id}/members/{member_id}")
+async def remove_lab_member(lab_id: str, member_id: str, user: User = Depends(current_user),
+                            s: AsyncSession = Depends(get_session)):
+    lab, m = await _membership(lab_id, user, s)
+    try:
+        mid = uuid.UUID(member_id)
+    except ValueError:
+        raise HTTPException(404, "找不到成員")
+    # an owner may remove anyone but themselves; a member may remove only themselves (leave)
+    if m.role != "owner" and mid != user.id:
+        raise HTTPException(403, "只能移除自己")
+    if mid == lab.owner_id:
+        raise HTTPException(400, "無法移除實驗室負責人")
+    await s.execute(delete(LabMember).where(LabMember.lab_id == lab.id, LabMember.user_id == mid))
+    await s.commit()
+    return {"ok": True}
+
+
+@app.post("/api/labs/{lab_id}/regenerate-code")
+async def regenerate_code(lab_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    lab, m = await _membership(lab_id, user, s)
+    if m.role != "owner":
+        raise HTTPException(403, "只有實驗室負責人可以重置加入碼")
+    lab.join_code = secrets.token_urlsafe(6)
+    await s.commit()
+    return {"join_code": lab.join_code}
+
+
+@app.get("/api/labs/{lab_id}/kb")
+async def lab_kb_list(lab_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    lab, _ = await _membership(lab_id, user, s)
+    if not kb.enabled():
+        return {"enabled": False, "documents": []}
+    return {"enabled": True, "documents": await kb.list_documents(await kb.lab_dataset_id(lab.id, name=lab.name))}
+
+
+@app.post("/api/labs/{lab_id}/kb/upload")
+async def lab_kb_upload(lab_id: str, files: list[UploadFile] = File(...), user: User = Depends(current_user),
+                        s: AsyncSession = Depends(get_session)):
+    lab, _ = await _membership(lab_id, user, s)
+    if not kb.enabled():
+        raise HTTPException(400, "知識庫未啟用（缺少 VOYAGE_API_KEY）")
+    dsid = await kb.lab_dataset_id(lab.id, name=lab.name)
+    return {"ingested": await _ingest_uploads(dsid, files)}
+
+
+@app.delete("/api/labs/{lab_id}/kb/documents/{doc_id}")
+async def lab_kb_delete(lab_id: str, doc_id: str, user: User = Depends(current_user),
+                        s: AsyncSession = Depends(get_session)):
+    lab, _ = await _membership(lab_id, user, s)
+    dsid = await kb.lab_dataset_id(lab.id, name=lab.name)
+    if not await kb.delete_document(doc_id, dataset_id=dsid):
         raise HTTPException(404, "找不到文件")
     return {"ok": True}
 

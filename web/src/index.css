@@ -485,3 +485,15 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
 .kb-row { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-top: 1px solid var(--border); }
 .kb-main { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
 .kb-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* lab library */
+.lab-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.lab-tab { border: 1px solid var(--border); background: var(--bg); border-radius: 999px; padding: 5px 13px; font-size: 13px; cursor: pointer; color: var(--text); }
+.lab-tab.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.lab-body { display: flex; flex-direction: column; gap: 10px; }
+.lab-sec-title { font-size: 14px; font-weight: 600; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+.lab-code { display: flex; align-items: center; gap: 8px; }
+.join-code { font-family: "IBM Plex Mono", ui-monospace, monospace; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 3px 9px; font-size: 14px; letter-spacing: .5px; }
+.lab-form { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.lab-form .search { flex: 1; }
+.lab-actions { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }

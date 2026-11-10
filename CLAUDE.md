@@ -48,7 +48,7 @@ backend/plasma_agent/
                    Runner(role, init_messages)、thinking-binding、_fit_context(超長時裁較早工具輸出)
   pipeline.py      九階段 FSM：各階段執行、研究卡、程式檢索②、程式驗證⑥、隔離複現⑦、唯讀審查⑧、
                    程式定等級⑨、人工關卡(approve/reject)、注入訊息用機器 marker [[pa:...]]
-  kb.py            知識庫：Voyage embed/rerank、chunk、ingest、pgvector 檢索、三層 dataset(task/base/lab)、基礎庫管理
+  kb.py            知識庫：Voyage embed/rerank、chunk、ingest、pgvector 檢索、三層 dataset(task/base/lab)、基礎庫／lab 庫管理
   worker.py        取工作執行、清理被刪對話、回報沙盒/GPU
   api.py           REST + SSE（/tools、/status、/domains、approve/reject、/kb/base 管理）
   auth.py          bcrypt + JWT
@@ -75,7 +75,8 @@ test_project/      使用者提供的 GEC CCP 範例檔（不進 git）
 ## 知識庫（`kb.py` / `tools/kb.py`）
 
 - pgvector 存 chunk（`vector(1024)`，HNSW cosine 索引，`init_db` 建 extension＋索引）。embedding/rerank 走 Voyage。
-- 三層 `kb_datasets.category`：`task`（綁 thread，上傳自動匯入）、`base`（共用基礎庫，頂部列「基礎庫」modal 管理，所有專案都查得到）、`lab`（未做）。`datasets_for_thread` = 該 thread 的 task ＋ 所有 base。
+- 三層 `kb_datasets.category`：`task`（綁 thread，上傳自動匯入）、`base`（共用基礎庫，頂部列「基礎庫」modal 管理，所有專案都查得到；**只有 admin 能上傳/刪，其他人唯讀**）、`lab`（實驗室共用庫，綁 `kb_datasets.lab_id`）。`datasets_for_thread(thread_id)` = 該 thread 的 task ＋ 所有 base ＋ **該 thread 擁有者所屬各 lab 的 lab dataset**（從 thread→user→lab_members join）。
+- **lab 權限層（實驗室）**：`labs`（name/owner_id/join_code）＋`lab_members`（lab↔user，role owner/member，unique(lab,user)）。lab 由**教職員**建立並擁有、文件成員皆可上傳/刪、成員管理（加人/移除/重置 code）限 owner。成員加入＝join code 自助或 owner 用 email 加。身份判定：**全域 admin** 看 `ADMIN_EMAILS`、**教職員** 看 `FACULTY_EMAILS`（`config.py` `_csv`、`auth.identity_flags`／`require_admin`；`User.is_faculty` 欄位登入/註冊回填，**未來串 nid API 改由它在登入時設 is_faculty**，其餘不動）。API：`/api/labs`（GET 列我的 lab＋can_create）、`POST /api/labs`（faculty）、`/api/labs/join`、`/api/labs/{id}`（成員看詳情＋成員清單，owner 另看 join_code）、`/api/labs/{id}/members`(owner 加)、`DELETE …/members/{uid}`（owner 移除或自己退出）、`…/regenerate-code`、`/api/labs/{id}/kb`(list/upload/delete)。前端頂部列「實驗室庫」→ `LabLibrary.tsx` modal（lab tabs＋文件＋成員＋join code＋建立/加入）。
 - 檢索：query→Voyage embed→pgvector cosine→Voyage rerank。工具 `kb_search`（多輪 Agentic RAG）、`kb_read`（讀整篇）。
 - 匯入：上傳檔（PDF 用 pypdf、文字檔直接讀）→ chunk → embed → 存。`api.py` 的 thread 上傳會自動匯入 task 層；`/api/kb/base/*` 管理 base 層。
 
@@ -152,4 +153,6 @@ docker compose logs --tail 50 worker
 
 - **#3 容器級複現隔離**（目前 prompt 級；低 CP 值、建議擱著）。
 - **#6 COMSOL 實題端到端驗收**（要使用者同意，因 pipeline 會送 ≥3 次求解到共用服務）。
-- 知識庫 **lab 權限層**、通用輕量沙盒映像、之後改用獨立 AWS IAM 使用者、要不要提供 Tavily key（目前 ddgs）。
+- **nid API 身份驗證串接**（教職員身份目前用 `FACULTY_EMAILS` 橋接，seam 在登入回填 `User.is_faculty`）。
+- 通用輕量沙盒映像、之後改用獨立 AWS IAM 使用者、要不要提供 Tavily key（目前 ddgs）。
+- **`deploy/.env` 的 `ADMIN_EMAILS`／`FACULTY_EMAILS` 要填真實的管理員／老師 email**（目前是測試帳號 lab-admin/lab-teacher@plasma.local，驗收用）。改 .env 後要重啟 api/worker（先確認 runs 佇列＝0）。
