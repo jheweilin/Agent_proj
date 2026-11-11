@@ -683,8 +683,11 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
 .prof-summary { border: 1px solid var(--border-2); border-radius: 9px; padding: 8px 10px; font: inherit; background: var(--bg); color: var(--text); resize: vertical; outline: none; }
 .prof-summary:focus { border-color: var(--accent-2); }
 .prof-actions { display: flex; gap: 8px; }
+.prof-aihint { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--accent-soft); border-radius: 9px; padding: 9px 12px; font-size: 12.5px; line-height: 1.5; color: var(--text-2); }
+.prof-aihint .btn { flex: none; white-space: nowrap; }
 .prof-draft { border: 1px dashed var(--border-2); border-radius: 9px; padding: 9px 11px; display: flex; flex-direction: column; gap: 7px; background: var(--panel-2); }
-.prof-draft-sum { font-size: 14px; }
+.prof-draft-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.prof-draft-sum { font-size: 14px; line-height: 1.6; }
 
 /* cross-lab directory */
 .dir-list { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }

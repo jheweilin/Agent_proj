@@ -29,6 +29,7 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
   const [pKeywords, setPKeywords] = useState("");
   const [pPublic, setPPublic] = useState(false);
   const [drafting, setDrafting] = useState(false);
+  const autoDraftedRef = useRef<string | null>(null);   // auto-draft an empty profile once per lab
   // L3 grants (owner) + per-doc tag editing
   const [grants, setGrants] = useState<{ incoming: Grant[]; outgoing: Grant[] }>({ incoming: [], outgoing: [] });
   const [approveFor, setApproveFor] = useState<string | null>(null);  // grant id being approved
@@ -71,6 +72,18 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
     if (sel) { loadDetail(sel); setSection((x) => (x === "manage" ? "files" : x)); }
     else { setLab(null); setDocs([]); setSection("manage"); }
   }, [sel, loadDetail]);
+
+  // Auto-draft the specialty card the first time an owner opens it with nothing written yet.
+  useEffect(() => {
+    if (section !== "profile" || lab?.role !== "owner" || !enabled || !sel || drafting) return;
+    if (pSummary.trim() || autoDraftedRef.current === sel) return;
+    let hasDraft = false;
+    try { const d = lab?.profile_draft ? JSON.parse(lab.profile_draft) : null; hasDraft = !!(d && (d.summary || d.keywords?.length)); } catch { /* ignore */ }
+    if (hasDraft) return;                       // an AI draft already waits to be adopted
+    autoDraftedRef.current = sel;
+    genDraft();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section, sel, enabled, pSummary, lab]);
 
   const guard = async (fn: () => Promise<void>) => {
     setBusy(true); setErr("");
@@ -378,8 +391,29 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
             </>)}
 
             {section === "profile" && isOwner && (<>
-              <div className="lab-sec-title">專長名片 <span className="muted small"> · 公開到跨實驗室名錄（只放方向與關鍵字，不含內容）</span></div>
+              <div className="lab-toolbar">
+                <div className="lab-toolbar-top">
+                  <div className="lab-sec-title">專長名片 <span className="muted small"> · 公開到跨實驗室名錄（只放方向與關鍵字，不含內容）</span></div>
+                </div>
+              </div>
               <div className="lab-profile">
+                <div className="prof-aihint">
+                  <span>✨ 讓 AI 讀你的實驗室庫，自動草擬一版研究方向簡介與關鍵字，再自行潤飾。{!pSummary.trim() && !drafting && " 名片還空著時會自動為你草擬。"}</span>
+                  <button className="btn primary small" disabled={busy || drafting || !enabled}
+                          onClick={genDraft} title="讓 AI 讀實驗室庫草擬一版">
+                    {drafting ? "AI 草擬中…" : "✨ AI 生成草稿"}
+                  </button>
+                </div>
+                {draft && (draft.summary || draft.keywords?.length) && (
+                  <div className="prof-draft">
+                    <div className="prof-draft-head">
+                      <span className="muted small">AI 草稿</span>
+                      <button className="btn primary small" disabled={busy} onClick={() => adoptDraft(draft!.summary, draft!.keywords || [])}>採用</button>
+                    </div>
+                    {draft.summary && <div className="prof-draft-sum">{draft.summary}</div>}
+                    {draft.keywords?.length > 0 && <div className="dir-tags">{draft.keywords.map((k) => <span key={k} className="dir-tag">{k}</span>)}</div>}
+                  </div>
+                )}
                 <label className="prof-public">
                   <input type="checkbox" checked={pPublic} disabled={busy} onChange={(e) => setPPublic(e.target.checked)} />
                   <span>公開到名錄（讓別的實驗室搜尋得到）</span>
@@ -390,19 +424,7 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
                        placeholder="關鍵字，用、或逗號分隔（最多 8 個）" onChange={(e) => setPKeywords(e.target.value)} />
                 <div className="prof-actions">
                   <button className="btn primary small" disabled={busy} onClick={saveProfile}>儲存名片</button>
-                  <button className="btn small" disabled={busy || drafting || !enabled}
-                          onClick={genDraft} title="讓 AI 讀實驗室庫草擬一版">
-                    {drafting ? "AI 草擬中…" : "AI 生成草稿"}
-                  </button>
                 </div>
-                {draft && (draft.summary || draft.keywords?.length) && (
-                  <div className="prof-draft">
-                    <div className="muted small">AI 草稿（可採用後再修改）：</div>
-                    {draft.summary && <div className="prof-draft-sum">{draft.summary}</div>}
-                    {draft.keywords?.length > 0 && <div className="dir-tags">{draft.keywords.map((k) => <span key={k} className="dir-tag">{k}</span>)}</div>}
-                    <button className="btn small" disabled={busy} onClick={() => adoptDraft(draft!.summary, draft!.keywords || [])}>採用草稿</button>
-                  </div>
-                )}
               </div>
             </>)}
 
