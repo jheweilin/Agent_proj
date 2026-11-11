@@ -107,6 +107,8 @@ export function ApprovalBar({ project, busy, onApprove, onReject }: {
   if (!plan && !accept) return null;
   const hasTodo = plan && steps.length > 0;
   const hasTools = plan && tools.length > 0;
+  // auto-grow the plan textareas so long content wraps instead of being clipped to one line
+  const fit = (el: HTMLTextAreaElement | null) => { if (el) { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; } };
   const patch = (i: number, p: Partial<EditStep>) => setSteps((s) => s.map((x, j) => (j === i ? { ...x, ...p } : x)));
   const toggleTool = (i: number, on: boolean) => setTools((s) => s.map((x, j) => (j === i ? { ...x, enabled: on } : x)));
   const anyOn = steps.some((s) => s.enabled);
@@ -151,11 +153,13 @@ export function ApprovalBar({ project, busy, onApprove, onReject }: {
               <input type="checkbox" checked={st.enabled} disabled={busy}
                      onChange={(e) => patch(i, { enabled: e.target.checked })} />
               <div className="plan-step-main">
-                <input className="plan-step-title" value={st.title} disabled={busy || !st.enabled}
-                       onChange={(e) => patch(i, { title: e.target.value })} />
-                <input className="plan-step-detail" value={st.detail} disabled={busy || !st.enabled}
-                       placeholder="做法與要檢查什麼（可留空）"
-                       onChange={(e) => patch(i, { detail: e.target.value })} />
+                <textarea className="plan-step-title" value={st.title} disabled={busy || !st.enabled} rows={1}
+                          ref={fit} onInput={(e) => fit(e.currentTarget)}
+                          onChange={(e) => patch(i, { title: e.target.value })} />
+                <textarea className="plan-step-detail" value={st.detail} disabled={busy || !st.enabled} rows={1}
+                          placeholder="做法與要檢查什麼（可留空）"
+                          ref={fit} onInput={(e) => fit(e.currentTarget)}
+                          onChange={(e) => patch(i, { detail: e.target.value })} />
                 {st.source && <span className="plan-step-src">來源：{st.source}</span>}
               </div>
             </div>

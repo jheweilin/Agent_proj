@@ -14,6 +14,9 @@ export default function LabDirectory({ onClose }: { onClose: () => void }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());  // cards showing their full summary
+  const toggleExpand = (id: string) =>
+    setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   useEffect(() => {
     api.labDirectory().then((r) => setLabs(r.labs)).catch((e) => setErr(e.message));
@@ -61,7 +64,11 @@ export default function LabDirectory({ onClose }: { onClose: () => void }) {
                   <strong>{l.name}</strong>
                   <span className="muted small">{l.member_count} 名成員{l.is_member ? " · 你已加入" : ""}</span>
                 </div>
-                {l.summary && <div className="dir-summary">{l.summary}</div>}
+                {l.summary && (<>
+                  <div className={`dir-summary${expanded.has(l.id) ? "" : " clamp"}`}>{l.summary}</div>
+                  {l.summary.length > 100 &&
+                    <button className="dir-more" onClick={() => toggleExpand(l.id)}>{expanded.has(l.id) ? "收合" : "…更多"}</button>}
+                </>)}
                 {l.keywords.length > 0 && (
                   <div className="dir-tags">{l.keywords.map((k) => <span key={k} className="dir-tag">{k}</span>)}</div>
                 )}

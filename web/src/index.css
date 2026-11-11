@@ -509,8 +509,11 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
 .plan-step.off { opacity: .55; }
 .plan-step > input[type=checkbox] { margin-top: 3px; width: 15px; height: 15px; flex: none; accent-color: var(--accent); cursor: pointer; }
 .plan-step-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.plan-step-title { border: none; background: none; font: inherit; font-weight: 600; color: var(--text); padding: 1px 2px; border-radius: 5px; outline: none; }
-.plan-step-detail { border: none; background: none; font: inherit; font-size: 13px; color: var(--text-2); padding: 1px 2px; border-radius: 5px; outline: none; }
+.plan-step-title, .plan-step-detail { width: 100%; box-sizing: border-box; display: block; border: none; background: none;
+  font: inherit; padding: 1px 2px; border-radius: 5px; outline: none; resize: none; overflow: hidden;
+  line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.plan-step-title { font-weight: 600; color: var(--text); }
+.plan-step-detail { font-size: 13px; color: var(--text-2); }
 .plan-step-title:focus, .plan-step-detail:focus { background: var(--accent-soft); }
 .plan-step-title:disabled, .plan-step-detail:disabled { color: var(--muted); }
 .plan-step-src { font-size: 11.5px; color: var(--muted); }
@@ -694,6 +697,9 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
 .dir-card { border: 1px solid var(--border); border-radius: 11px; padding: 12px 14px; background: var(--panel-2); }
 .dir-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .dir-summary { font-size: 14px; margin-top: 6px; line-height: 1.6; }
+.dir-summary.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.dir-more { background: none; border: none; color: var(--accent); font-size: 12.5px; cursor: pointer; padding: 2px 0; margin-top: 2px; }
+.dir-more:hover { text-decoration: underline; }
 .dir-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .dir-tag { font-size: 11.5px; color: var(--accent); background: var(--accent-soft); padding: 2px 9px; border-radius: 999px; }
 .dir-foot { margin-top: 10px; }
