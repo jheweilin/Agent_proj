@@ -120,7 +120,22 @@ def _fit_context(messages: list[dict]) -> list[dict]:
     return out
 
 
+def _scrub_nul(obj):
+    """Strip NUL bytes (\\u0000) from any string in the content — PostgreSQL text/JSONB cannot store
+    them (asyncpg UntranslatableCharacterError), and they slip in when a tool reads binary data
+    (e.g. an STL/.mph) into a result. Valid base64 thinking signatures never contain NUL, so this is
+    a no-op for them."""
+    if isinstance(obj, str):
+        return obj.replace("\x00", "") if "\x00" in obj else obj
+    if isinstance(obj, list):
+        return [_scrub_nul(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _scrub_nul(v) for k, v in obj.items()}
+    return obj
+
+
 async def _save_message(thread_id: uuid.UUID, run_id: uuid.UUID, role: str, content: list[dict]) -> None:
+    content = _scrub_nul(content)
     async with SessionLocal() as s:
         s.add(Message(thread_id=thread_id, run_id=run_id, role=role, content=content))
         t = await s.get(Thread, thread_id)
