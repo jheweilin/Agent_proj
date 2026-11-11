@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 
 # tools a read-only reviewer may use (look, search, record findings — never execute or write)
-READONLY_TOOLS = {"read_file", "list_files", "see_image", "kb_search", "kb_read", "record_review"}
+READONLY_TOOLS = {"read_file", "list_files", "see_image", "kb_search", "kb_read", "kb_list", "record_review"}
 
 # the only tool the planner may use: record its execution steps as an editable checklist
 PLANNER_TOOLS = {"record_plan"}

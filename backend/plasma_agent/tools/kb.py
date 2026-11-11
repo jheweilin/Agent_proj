@@ -27,6 +27,24 @@ async def kb_search(ctx: ToolContext, args: dict) -> ToolResult:
 
 
 @tool(
+    "kb_list",
+    """列出這個對話目前看得到的知識庫文件：使用者上傳的、共用基礎庫、以及使用者所屬實驗室庫裡老師與成員放的論文與資料。
+當使用者問「有哪些論文／資料／文件可以看」「老師上傳了什麼」這類問題時，用這個把實際清單列出來，不要叫使用者自己去找。
+回傳每份文件的標題、所屬收藏（哪個實驗室庫／基礎庫）、段數。""",
+    {},
+    [],
+)
+async def kb_list(ctx: ToolContext, args: dict) -> ToolResult:
+    if not kb.enabled():
+        return ToolResult("知識庫未啟用（缺少 VOYAGE_API_KEY）。", is_error=True)
+    docs = await kb.list_visible_documents(ctx.thread_id)
+    if not docs:
+        return ToolResult("目前這個對話的知識庫（含所屬實驗室庫、基礎庫）裡沒有任何文件。")
+    body = json.dumps({"documents": docs}, ensure_ascii=False, indent=1)
+    return ToolResult(body, preview=f"知識庫文件：{len(docs)} 篇")
+
+
+@tool(
     "kb_read",
     "讀取知識庫裡某份文件的完整內容（用檔名片段比對），用來細讀 kb_search 找到的來源。",
     {"source": {"type": "string", "description": "檔名或其中一段（例如 paper.pdf）"}},

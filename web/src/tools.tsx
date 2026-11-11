@@ -1,6 +1,7 @@
-import { ReactNode } from "react";
-import { fileUrl, ToolBlock } from "./api";
+import { ReactNode, useContext } from "react";
+import { fileUrl, kbDocFileUrl, ToolBlock } from "./api";
 import { Code, langFromPath, Terminal } from "./Code";
+import { KbDocOpenCtx } from "./Render";
 
 type Meta = { label: string; icon: string; cat: "sbx" | "file" | "job" | "comsol" | "web" | "misc" };
 export const TOOL_META: Record<string, Meta> = {
@@ -188,9 +189,36 @@ export function ToolBody({ b, threadId }: { b: ToolBlock; threadId: string }) {
     }
     case "see_image":
       return <>{(r?.images ?? []).map((p) => <img key={p} className="tool-img" src={fileUrl(threadId, p)} alt={p} />)}</>;
+    case "kb_list": {
+      const d = parseJSON(text);
+      return d?.documents ? <KbDocResults docs={d.documents} /> : null;
+    }
     default:
       return null;
   }
+}
+
+export function KbDocResults({ docs }: { docs: any[] }) {
+  const openKbDoc = useContext(KbDocOpenCtx);
+  if (!docs.length) return <div className="muted small">知識庫沒有文件。</div>;
+  return (
+    <div className="results-card">
+      <div className="results-head"><strong>知識庫文件</strong><span className="muted small"> · {docs.length} 篇 · 點「開啟」在右側閱讀</span></div>
+      <div className="kbdoc-list">
+      {docs.map((f) => (
+        <div key={f.id} className="kbdoc-row">
+          <span className="kbdoc-icon">{(f.mime === "application/pdf" || (f.source || "").endsWith(".pdf")) ? "📕" : "📄"}</span>
+          <div className="kbdoc-main">
+            <span className="kbdoc-name" title={f.source}>{f.title || f.source}</span>
+            <span className="muted small">{f.collection}{f.kind === "experience" ? " · 研究經驗" : ""} · {f.chunks} 段</span>
+          </div>
+          <button className="btn ghost small" onClick={() => openKbDoc?.(f)}>開啟</button>
+          {f.has_file && <a className="btn ghost small" href={kbDocFileUrl(f.id, true)} target="_blank" rel="noreferrer">下載</a>}
+        </div>
+      ))}
+      </div>
+    </div>
+  );
 }
 
 /** Full view for the side panel. `text` is the complete tool output. */

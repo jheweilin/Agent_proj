@@ -64,6 +64,7 @@ export default function App() {
   const [kbOpen, setKbOpen] = useState(false);
   const [labOpen, setLabOpen] = useState(false);
   const [dirOpen, setDirOpen] = useState(false);
+  const [labNotif, setLabNotif] = useState(0);  // pending nominations + grant requests awaiting me as a lab owner
   const [newOpen, setNewOpen] = useState(false);
 
   useEffect(() => {
@@ -72,6 +73,14 @@ export default function App() {
   }, []);
 
   useEffect(() => { api.domains().then((d) => { if (d.length) setDomainList(d); }).catch(() => { /* keep fallback */ }); }, []);
+  // lab-library badge: items awaiting me as a lab owner; refresh on login, when the modal closes, and periodically
+  useEffect(() => {
+    if (!user) { setLabNotif(0); return; }
+    const refresh = () => api.labNotifications().then((n) => setLabNotif(n.total)).catch(() => {});
+    refresh();
+    const id = setInterval(refresh, 45000);
+    return () => clearInterval(id);
+  }, [user, labOpen]);
 
   const domainLabel = useCallback(
     (name: string) => domainList.find((d) => d.name === name)?.label || name, [domainList]);
@@ -136,7 +145,9 @@ export default function App() {
         <button className="btn primary small" onClick={() => setNewOpen(true)}>＋ 新研究</button>
         <span className="spacer" />
         <button className="topbtn" title="共用基礎知識庫" onClick={() => setKbOpen(true)}>基礎庫</button>
-        <button className="topbtn" title="實驗室共用知識庫" onClick={() => setLabOpen(true)}>實驗室庫</button>
+        <button className="topbtn" title="實驗室共用知識庫" onClick={() => setLabOpen(true)}>
+          實驗室庫{labNotif > 0 && <span className="topbtn-badge">{labNotif}</span>}
+        </button>
         <button className="topbtn" title="跨實驗室專長名錄" onClick={() => setDirOpen(true)}>名錄</button>
         <button className="topbtn" title="切換主題" onClick={() => setTheme(nextTheme[theme])}>{themeLabel[theme]}</button>
         <span className="avatar user" title={`${user.name}\n${user.email}`}>{(user.name || user.email)[0]?.toUpperCase()}</span>

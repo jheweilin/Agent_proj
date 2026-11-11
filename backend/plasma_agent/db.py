@@ -46,6 +46,9 @@ class Thread(Base):
     # per-thread runtime config set at creation: {"models": {agent_key: model_id}, "effort", "max_iterations"}.
     # Missing keys fall back to settings defaults. See agent.thread_runtime.
     config: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    # chat mode only: null = not yet classified; true = the opener looks like a research task
+    # worth promoting to the project pipeline (UI then offers a one-click 轉成研究專案). See agent.classify_project.
+    suggest_project: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -193,6 +196,11 @@ class KbDocument(Base):
     source_thread_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)  # back-link to origin project
     submitted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)       # nominator
     tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")    # topic tags (L3 grants)
+    # original-file retention (base/lab KB): keep the uploaded file so it can be previewed/downloaded
+    title: Mapped[str] = mapped_column(String(600), nullable=False, default="", server_default="")   # editable display name
+    file_path: Mapped[str] = mapped_column(String(1000), nullable=False, default="", server_default="")  # stored original (under workspaces/_kb)
+    byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    mime: Mapped[str] = mapped_column(String(200), nullable=False, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -236,6 +244,8 @@ async def init_db() -> None:
             "ALTER TABLE kb_datasets ADD COLUMN IF NOT EXISTS lab_id UUID")
         await conn.exec_driver_sql(
             "ALTER TABLE threads ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}'::jsonb")
+        await conn.exec_driver_sql(
+            "ALTER TABLE threads ADD COLUMN IF NOT EXISTS suggest_project BOOLEAN")
         # knowledge-flywheel columns on kb_documents (existing rows → upload/reference/approved)
         await conn.exec_driver_sql(
             "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS origin VARCHAR(20) NOT NULL DEFAULT 'upload'")
@@ -249,6 +259,10 @@ async def init_db() -> None:
             "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS submitted_by UUID")
         await conn.exec_driver_sql(
             "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb")
+        await conn.exec_driver_sql("ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS title VARCHAR(600) NOT NULL DEFAULT ''")
+        await conn.exec_driver_sql("ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS file_path VARCHAR(1000) NOT NULL DEFAULT ''")
+        await conn.exec_driver_sql("ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS byte_size BIGINT NOT NULL DEFAULT 0")
+        await conn.exec_driver_sql("ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS mime VARCHAR(200) NOT NULL DEFAULT ''")
         # lab profile columns (L2 專長名錄)
         await conn.exec_driver_sql("ALTER TABLE labs ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT ''")
         await conn.exec_driver_sql("ALTER TABLE labs ADD COLUMN IF NOT EXISTS keywords JSONB NOT NULL DEFAULT '[]'::jsonb")

@@ -370,6 +370,28 @@ async def approve(thread, plan_steps=None) -> dict:
         return {"ok": False, "detail": "目前沒有待核准的關卡"}
 
 
+async def promote(thread) -> dict:
+    """Turn an existing chat thread into a research project: flip mode, create the Project at the
+    clarify stage, and enqueue a run that starts the pipeline using the existing conversation as the
+    research idea (a user note ensures the turn ends on a user message — Bedrock has no prefill)."""
+    async with SessionLocal() as s:
+        if (await s.execute(select(Project).where(Project.thread_id == thread.id))).scalar_one_or_none():
+            return {"ok": False, "detail": "這個對話已經是研究專案"}
+        t = await s.get(Thread, thread.id)
+        t.mode, t.suggest_project = "project", False
+        s.add(Project(thread_id=thread.id, domain=getattr(t, "domain", "plasma"), stage="clarify", status="running"))
+        run = Run(thread_id=thread.id, status="queued", model="", stage="clarify")
+        s.add(run)
+        await s.flush()
+        run_id = run.id
+        await s.commit()   # commit first to release the threads-row lock; inserting the note message
+        # (FK → threads) in a separate session would otherwise wait on this txn forever
+    await _append_user(thread.id, run_id, _note("promote") +
+        "\n（使用者把這個對話轉為研究專案。請把以上對話內容當作研究想法，從第一階段「釐清」開始。）")
+    await events.enqueue_run(str(run_id))
+    return {"ok": True, "stage": "clarify", "status": "running", "run_id": str(run_id)}
+
+
 async def reject(thread, feedback: str) -> dict:
     """Send the current gate back. Plan gate → re-clarify; acceptance gate → redo research."""
     fb = (feedback or "").strip()

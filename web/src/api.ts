@@ -22,7 +22,7 @@ export type Grant = {
   id: string; status: string; scope: string; scope_ref: string[]; note: string;
   grantor_lab_id: string; grantee_lab_id: string; grantor_name: string; grantee_name: string; created_at: string;
 };
-export type Thread = { id: string; title: string; domain: string; mode: string; config?: ThreadConfig; created_at: string; updated_at: string; active_run_id: string | null };
+export type Thread = { id: string; title: string; domain: string; mode: string; config?: ThreadConfig; suggest_project?: boolean | null; created_at: string; updated_at: string; active_run_id: string | null };
 
 export type ToolResult = {
   is_error: boolean; preview: string; output?: string; images?: string[]; ui?: any; seconds?: number;
@@ -67,6 +67,8 @@ export type KbDoc = {
   // knowledge-flywheel metadata (lab KB); defaults upload/reference/approved for plain uploads
   origin?: string; kind?: string; status?: string; tags?: string[];
   source_thread_id?: string | null; submitted_by?: string | null; submitted_by_name?: string;
+  // retained original file (base/lab KB)
+  title?: string; size?: number; mime?: string; has_file?: boolean;
 };
 
 export type ProjectStage = { name: string; label: string };
@@ -140,6 +142,8 @@ export const api = {
   approve: (id: string, planSteps?: PlanStep[]) =>
     req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/approve`,
       planSteps ? { plan_steps: planSteps } : undefined),
+  promote: (id: string) =>
+    req<{ ok: boolean; run_id?: string }>("POST", `/api/threads/${id}/promote`),
   reject: (id: string, feedback: string) =>
     req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/reject`, { feedback }),
   toolDetail: (id: string, toolId: string) => req<ToolDetail>("GET", `/api/threads/${id}/tools/${toolId}`),
@@ -181,6 +185,7 @@ export const api = {
   labKbReview: (id: string, docId: string, action: "approve" | "reject") =>
     req<{ ok: boolean }>("POST", `/api/labs/${id}/kb/pending/${docId}/${action}`),
   // L2 專長名錄
+  labNotifications: () => req<{ pending: number; requests: number; total: number }>("GET", "/api/labs/notifications"),
   labDirectory: () => req<{ labs: DirectoryLab[] }>("GET", "/api/labs/directory"),
   setLabProfile: (id: string, body: { summary: string; keywords: string[]; is_public: boolean }) =>
     req<Lab>("PUT", `/api/labs/${id}/profile`, body),
@@ -193,7 +198,20 @@ export const api = {
   labGrants: (id: string) => req<{ incoming: Grant[]; outgoing: Grant[] }>("GET", `/api/labs/${id}/grants`),
   actGrant: (grantId: string, action: "approve" | "reject" | "revoke", body?: { scope: string; scope_ref: string[] }) =>
     req<{ ok: boolean; status: string }>("POST", `/api/grants/${grantId}/${action}`, body),
+  // unified KB document view / manage (original file retained for base + lab uploads)
+  kbDocText: (docId: string) => req<{ text: string; source: string }>("GET", `/api/kb/documents/${docId}/text`),
+  kbDocEdit: (docId: string, body: { title?: string; tags?: string[] }) =>
+    req<{ ok: boolean }>("PATCH", `/api/kb/documents/${docId}`, body),
+  kbDocReplace: (docId: string, file: File) => {
+    const fd = new FormData(); fd.append("file", file);
+    return req<{ ok: boolean }>("POST", `/api/kb/documents/${docId}/replace`, fd, true);
+  },
 };
+
+export function kbDocFileUrl(docId: string, download = false) {
+  const t = encodeURIComponent(getToken() || "");
+  return `/api/kb/documents/${docId}/file?token=${t}${download ? "&download=1" : ""}`;
+}
 
 export function fileUrl(threadId: string, path: string, download = false) {
   const t = encodeURIComponent(getToken() || "");

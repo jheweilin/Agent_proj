@@ -2,7 +2,7 @@ import { DragEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useS
 import { api, Attachment, Block, eventsUrl, fmtDuration, fmtTime, fmtTokens, Item, modelName, parsePipe, PlanStep, Project, RunInfo, ToolBlock, Usage } from "./api";
 import Panel, { PanelTab } from "./Panel";
 import { ApprovalBar, EvidenceCard, NominateCard, PipelineNote, StageTracker, stageLabels } from "./Pipeline";
-import { AssistantTurn, FileOpenCtx, Markdown } from "./Render";
+import { AssistantTurn, FileOpenCtx, KbDocOpenCtx, KbDocRef, Markdown } from "./Render";
 import { meta } from "./tools";
 
 type Live = {
@@ -28,6 +28,8 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   const [live, setLive] = useState<Live>(emptyLive());
   const [mode, setMode] = useState<string>("chat");
   const [project, setProject] = useState<Project | null>(null);
+  const [suggestProject, setSuggestProject] = useState<boolean | null>(null);
+  const [dismissPromote, setDismissPromote] = useState(false);
   const [gateBusy, setGateBusy] = useState(false);
   const [text, setText] = useState("");
   const [uploads, setUploads] = useState<string[]>([]);
@@ -39,6 +41,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   const [panelTab, setPanelTab] = useState<PanelTab>("status");
   const [selected, setSelected] = useState<ToolBlock | null>(null);
   const [filePath, setFilePath] = useState<string | null>(null);
+  const [kbDoc, setKbDoc] = useState<KbDocRef | null>(null);
   const [tick, setTick] = useState(0);
   const [now, setNow] = useState(Date.now());
   const esRef = useRef<EventSource | null>(null);
@@ -55,6 +58,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
     setTitle(t.title);
     setMode(t.mode);
     setProject(m.project);
+    setSuggestProject(t.suggest_project ?? null);
     return t.active_run_id;
   }, [threadId]);
 
@@ -137,6 +141,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   }, [load, connect, onActivity]);
   const approve = (planSteps?: PlanStep[]) => passGate(() => api.approve(threadId, planSteps));
   const reject = (fb: string) => passGate(() => api.reject(threadId, fb));
+  const promote = () => passGate(() => api.promote(threadId));
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
@@ -161,6 +166,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
 
   const openStep = (b: ToolBlock) => { setSelected(b); setPanelTab("detail"); setPanelOpen(true); };
   const openFile = (p: string) => { setFilePath(p); setPanelTab("files"); setPanelOpen(true); };
+  const openKbDoc = (d: KbDocRef) => { setKbDoc(d); setPanelTab("kbdoc"); setPanelOpen(true); };
   const openPanel = (t: PanelTab) => { if (panelOpen && panelTab === t) setPanelOpen(false); else { setPanelTab(t); setPanelOpen(true); } };
 
   const runById = useMemo(() => Object.fromEntries(runs.map((r) => [r.id, r])), [runs]);
@@ -210,6 +216,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
         </header>
 
         <FileOpenCtx.Provider value={openFile}>
+        <KbDocOpenCtx.Provider value={openKbDoc}>
         <div className="messages" ref={scrollRef} onScroll={onScroll}>
           <div className="messages-inner">
             {isProject && project && <StageTracker project={project} live={!!activeRun} onJump={jumpToStage} />}
@@ -265,14 +272,29 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
               </div>
             )}
             {!activeRun && lastRun?.status === "failed" && lastRun.error && <div className="error">上一次執行失敗：{lastRun.error}</div>}
+            {/* current-action cards live at the end of the conversation flow (scroll with history,
+                never squeeze the messages area the way a fixed composer block would) */}
+            {!isProject && suggestProject && !dismissPromote && !activeRun && items.length > 0 && (
+              <div className="promote-suggest">
+                <div className="promote-text">
+                  <strong>這看起來是個完整研究任務</strong>
+                  <span className="muted small">要改用<strong>研究專案</strong>嗎？會走九階段（釐清→規劃→研究→驗證→審查），關鍵處由你把關。</span>
+                </div>
+                <div className="promote-actions">
+                  <button className="btn primary small" disabled={gateBusy} onClick={promote}>轉成研究專案</button>
+                  <button className="btn ghost small" disabled={gateBusy} onClick={() => setDismissPromote(true)}>繼續用對話</button>
+                </div>
+              </div>
+            )}
+            {atGate && project && <ApprovalBar project={project} busy={gateBusy} onApprove={approve} onReject={reject} />}
+            {isProject && !activeRun && project?.status === "completed" && <NominateCard project={project} threadId={threadId} />}
             <div ref={bottomRef} />
           </div>
         </div>
+        </KbDocOpenCtx.Provider>
         </FileOpenCtx.Provider>
 
         <div className="composer">
-          {atGate && project && <ApprovalBar project={project} busy={gateBusy} onApprove={approve} onReject={reject} />}
-          {isProject && !activeRun && project?.status === "completed" && <NominateCard project={project} threadId={threadId} />}
           {error && <div className="error">{error}</div>}
           {uploads.length > 0 && (
             <div className="chips">
@@ -305,7 +327,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
       </div>
       {panelOpen && (
         <Panel threadId={threadId} tab={panelTab} setTab={setPanelTab} selected={selected} filePath={filePath}
-          setFilePath={setFilePath} tick={tick} liveRunning={!!activeRun} onClose={() => setPanelOpen(false)} />
+          setFilePath={setFilePath} kbDoc={kbDoc} tick={tick} liveRunning={!!activeRun} onClose={() => setPanelOpen(false)} />
       )}
     </div>
   );

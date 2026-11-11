@@ -386,6 +386,30 @@ async def make_title(thread_id: uuid.UUID, first_text: str) -> None:
             await s.commit()
 
 
+async def classify_project(thread_id: uuid.UUID, first_text: str) -> None:
+    """Flag a chat thread whose opener looks like a verifiable research task, so the UI can offer
+    a one-click 轉成研究專案 (never auto-converts). Sets threads.suggest_project. Best-effort."""
+    flag = False
+    try:
+        resp = await client().messages.create(
+            model=settings.title_model, max_tokens=1500, output_config={"effort": "low"},
+            messages=[{"role": "user", "content":
+                       "判斷下面的使用者訊息屬於哪一類，只回答一個字：\n"
+                       "Y＝需要實際動手做、並值得查核的研究任務（要跑模擬、建模、數值計算、推導、實驗或資料分析，"
+                       "需要規劃與驗證結果）；\n"
+                       "N＝一般問答、概念解釋、查詢、閒聊、或只要一段文字說明。\n\n訊息：\n" + first_text[:1500]}])
+        up = "".join(b.text for b in resp.content if b.type == "text").strip().upper()
+        flag = up.startswith("Y")
+    except Exception as e:
+        log.warning("project classification failed: %s", e)
+        return
+    async with SessionLocal() as s:
+        t = await s.get(Thread, thread_id)
+        if t and t.suggest_project is None:
+            t.suggest_project = flag
+            await s.commit()
+
+
 async def execute_run(run_id: str) -> None:
     async with SessionLocal() as s:
         run = await s.get(Run, uuid.UUID(run_id))
@@ -410,13 +434,16 @@ async def execute_run(run_id: str) -> None:
     await runner.publish({"type": "run_start", "run_id": run_id, "model": chat_model,
                           "started_at": utcnow().isoformat()})
 
-    title_task = None
+    title_task = classify_task = None
     if thread.title == "新對話":
         hist = await _load_history(thread.id)
         first = next((m for m in hist if m["role"] == "user"), None)
         if first:
             txt = " ".join(b.get("text", "") for b in first["content"] if b.get("type") == "text")
             title_task = asyncio.create_task(make_title(thread.id, txt))
+            # chat opener → classify whether to suggest promoting to a research project
+            if getattr(thread, "mode", "chat") == "chat" and thread.suggest_project is None and txt.strip():
+                classify_task = asyncio.create_task(classify_project(thread.id, txt))
 
     status, error = "failed", None
     try:
@@ -446,6 +473,8 @@ async def execute_run(run_id: str) -> None:
 
     if title_task:
         await asyncio.wait({title_task}, timeout=20)
+    if classify_task:
+        await asyncio.wait({classify_task}, timeout=20)
 
     async with SessionLocal() as s:
         db_run = await s.get(Run, uuid.UUID(run_id))

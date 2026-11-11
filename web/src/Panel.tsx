@@ -3,18 +3,21 @@ import {
   api, fetchText, FileEntry, fileUrl, fmtDuration, fmtSize, fmtTokens, modelName, ThreadStatus, ToolBlock, ToolDetail,
 } from "./api";
 import { Code, langFromPath, Terminal } from "./Code";
-import { Markdown } from "./Render";
+import { KbDocRef, Markdown } from "./Render";
+import { kbDocFileUrl } from "./api";
 import { meta, ToolFull, toolSummary } from "./tools";
 
-export type PanelTab = "detail" | "files" | "status";
+export type PanelTab = "detail" | "files" | "status" | "kbdoc";
 
-export default function Panel({ threadId, tab, setTab, selected, filePath, setFilePath, tick, liveRunning, onClose }: {
+export default function Panel({ threadId, tab, setTab, selected, filePath, setFilePath, kbDoc, tick, liveRunning, onClose }: {
   threadId: string; tab: PanelTab; setTab: (t: PanelTab) => void; selected: ToolBlock | null;
-  filePath: string | null; setFilePath: (p: string | null) => void; tick: number; liveRunning: boolean; onClose: () => void;
+  filePath: string | null; setFilePath: (p: string | null) => void; kbDoc: KbDocRef | null;
+  tick: number; liveRunning: boolean; onClose: () => void;
 }) {
   return (
     <aside className="panel">
       <div className="panel-tabs">
+        {kbDoc && <button className={tab === "kbdoc" ? "on" : ""} onClick={() => setTab("kbdoc")}>論文</button>}
         <button className={tab === "detail" ? "on" : ""} onClick={() => setTab("detail")}>步驟詳情</button>
         <button className={tab === "files" ? "on" : ""} onClick={() => setTab("files")}>檔案</button>
         <button className={tab === "status" ? "on" : ""} onClick={() => setTab("status")}>狀態</button>
@@ -22,11 +25,44 @@ export default function Panel({ threadId, tab, setTab, selected, filePath, setFi
         <button className="icon" onClick={onClose} aria-label="關閉面板">✕</button>
       </div>
       <div className="panel-body">
+        {tab === "kbdoc" && kbDoc && <KbDocView doc={kbDoc} />}
         {tab === "detail" && <DetailTab threadId={threadId} selected={selected} tick={tick} />}
         {tab === "files" && <FilesTab threadId={threadId} tick={tick} filePath={filePath} setFilePath={setFilePath} />}
         {tab === "status" && <StatusTab threadId={threadId} tick={tick} liveRunning={liveRunning} openFile={(p) => { setFilePath(p); setTab("files"); }} />}
       </div>
     </aside>
+  );
+}
+
+function KbDocView({ doc }: { doc: KbDocRef }) {
+  const isPdf = doc.mime === "application/pdf" || (doc.source || "").toLowerCase().endsWith(".pdf");
+  const isImg = (doc.mime || "").startsWith("image/");
+  const [text, setText] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    setText(null); setErr("");
+    if (doc.has_file && (isPdf || isImg)) return;   // shown via iframe/img, no text fetch
+    api.kbDocText(doc.id).then((r) => setText(r.text)).catch((e) => setErr(e.message));
+  }, [doc.id]);
+  return (
+    <div className="preview">
+      <div className="preview-head">
+        <span className="small" title={doc.source}>{doc.title || doc.source}</span>
+        <span className="spacer" />
+        {doc.has_file && <a className="btn ghost small" href={kbDocFileUrl(doc.id)} target="_blank" rel="noreferrer">新分頁</a>}
+        {doc.has_file && <a className="btn ghost small" href={kbDocFileUrl(doc.id, true)}>下載</a>}
+      </div>
+      <div className="preview-body">
+        {doc.has_file && isPdf && <iframe src={kbDocFileUrl(doc.id)} title={doc.source} className="preview-pdf" />}
+        {doc.has_file && isImg && <img src={kbDocFileUrl(doc.id)} alt={doc.source} className="preview-img" />}
+        {!(doc.has_file && (isPdf || isImg)) && (
+          err ? <div className="error small">{err}</div>
+            : text === null ? <div className="muted small">載入中…</div>
+              : <Markdown text={text} threadId="" />
+        )}
+        {!doc.has_file && <div className="muted small pad">（此文件在支援保留原始檔之前上傳，只能看抽取出的文字。）</div>}
+      </div>
+    </div>
   );
 }
 

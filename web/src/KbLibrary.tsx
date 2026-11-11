@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, KbDoc } from "./api";
+import KbDocList from "./KbDocList";
 
 // Shared base knowledge library — documents every research project can search.
 export default function KbLibrary({ onClose }: { onClose: () => void }) {
@@ -53,18 +54,7 @@ export default function KbLibrary({ onClose }: { onClose: () => void }) {
           {docs.length > 0 && <span className="muted small">{docs.length} 份文件 · {totalChunks} 段</span>}
         </div>
         {err && <div className="error small">{err}</div>}
-        <div className="kb-list">
-          {docs.length === 0 && enabled && <div className="muted small pad">基礎庫還沒有文件。上傳 PDF 或文字檔開始建立共用資料。</div>}
-          {docs.map((d) => (
-            <div key={d.id} className="kb-row">
-              <div className="kb-main">
-                <span className="kb-name" title={d.source}>{d.source}</span>
-                <span className="muted small">{d.chunks} 段</span>
-              </div>
-              {canManage && <button className="icon" title="從基礎庫刪除" onClick={() => del(d)}>✕</button>}
-            </div>
-          ))}
-        </div>
+        <KbDocList docs={docs} canManage={canManage} enabled={enabled} onDelete={del} onChanged={load} />
       </div>
     </div>
   );

@@ -115,13 +115,30 @@ async def get_or_create_dataset(thread_id, owner_id=None, category: str = "task"
         return ds.id
 
 
+def kb_files_dir() -> Path:
+    """Where original base/lab KB uploads are kept (under the workspaces volume so api can serve them)."""
+    d = settings.workspaces_dir / "_kb"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _unlink_quietly(path: str) -> None:
+    if path:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 async def ingest(dataset_id, source: str, body: str, *, origin: str = "upload", kind: str = "reference",
-                 status: str = "approved", source_thread_id=None, submitted_by=None, tags=None) -> dict:
+                 status: str = "approved", source_thread_id=None, submitted_by=None, tags=None,
+                 title: str = "", file_path: str = "", byte_size: int = 0, mime: str = "") -> dict:
     """Chunk + embed `body` and store it under `source`, replacing any earlier copy of that source.
 
     The keyword metadata drives the knowledge flywheel (see docs/LAB_KNOWLEDGE_PLAN.md): manual
     uploads keep the defaults (upload/reference/approved); a nominated research experience is stored
-    as research/experience/pending until a lab owner approves it (only `approved` is retrievable)."""
+    as research/experience/pending until a lab owner approves it (only `approved` is retrievable).
+    `file_path` (if given) is the retained original file so the UI can preview/download it."""
     chunks = chunk_text(body)
     if not chunks:
         return {"source": source, "chunks": 0}
@@ -130,11 +147,13 @@ async def ingest(dataset_id, source: str, body: str, *, origin: str = "upload", 
         old = (await s.execute(select(KbDocument).where(KbDocument.dataset_id == dataset_id,
                                                         KbDocument.source == source))).scalars().all()
         for d in old:
+            _unlink_quietly(d.file_path)   # drop the replaced original so it doesn't orphan
             await s.execute(delete(KbChunk).where(KbChunk.document_id == d.id))
             await s.delete(d)
         doc = KbDocument(dataset_id=dataset_id, source=source, file_hash=fh, n_chunks=len(chunks),
                          origin=origin, kind=kind, status=status,
-                         source_thread_id=source_thread_id, submitted_by=submitted_by, tags=list(tags or []))
+                         source_thread_id=source_thread_id, submitted_by=submitted_by, tags=list(tags or []),
+                         title=title, file_path=file_path, byte_size=byte_size, mime=mime)
         s.add(doc)
         await s.flush()
         vecs = await embed(chunks, "document")
@@ -267,6 +286,28 @@ async def search(scope, query: str, top_k: int = 5, pool: int = 30) -> list[dict
     return out
 
 
+async def list_visible_documents(thread_id) -> list[dict]:
+    """Every document this thread can see (its uploads + base + its labs + cross-lab grants),
+    with a human collection label — so the agent can list 'what papers are available' and the UI
+    can open each one. Only approved docs."""
+    scope = await visible_scope(thread_id)
+    clause = _scope_clause(scope, doc_model=True)
+    if clause is None:
+        return []
+    async with SessionLocal() as s:
+        rows = (await s.execute(
+            select(KbDocument, KbDataset).join(KbDataset, KbDataset.id == KbDocument.dataset_id)
+            .where(clause, KbDocument.status == "approved")
+            .order_by(KbDataset.category, KbDocument.created_at.desc()))).all()
+    out = []
+    for d, ds in rows:
+        label = (f"實驗室庫：{ds.name}" if ds.category == "lab"
+                 else "基礎庫" if ds.category == "base" else "本對話上傳")
+        out.append({"id": str(d.id), "title": d.title or d.source, "source": d.source, "collection": label,
+                    "kind": d.kind, "chunks": d.n_chunks, "has_file": bool(d.file_path), "mime": d.mime})
+    return out
+
+
 async def read_document(scope, source: str, max_chars: int = 20000) -> str | None:
     """Return the full text of a stored document (its chunks joined), matched by source name,
     restricted to the visible scope (dataset-id list or visible_scope dict)."""
@@ -311,11 +352,46 @@ async def list_documents(dataset_id, status: str | None = "approved") -> list[di
         if status is not None:
             q = q.where(KbDocument.status == status)
         rows = (await s.execute(q.order_by(KbDocument.created_at.desc()))).scalars().all()
-    return [{"id": str(d.id), "source": d.source, "chunks": d.n_chunks,
+    return [{"id": str(d.id), "source": d.source, "title": d.title or d.source, "chunks": d.n_chunks,
              "origin": d.origin, "kind": d.kind, "status": d.status, "tags": d.tags or [],
+             "size": d.byte_size, "mime": d.mime, "has_file": bool(d.file_path),
              "source_thread_id": str(d.source_thread_id) if d.source_thread_id else None,
              "submitted_by": str(d.submitted_by) if d.submitted_by else None,
              "created_at": d.created_at.isoformat()} for d in rows]
+
+
+async def get_document(doc_id: str) -> KbDocument | None:
+    async with SessionLocal() as s:
+        try:
+            return await s.get(KbDocument, uuid.UUID(doc_id))
+        except ValueError:
+            return None
+
+
+async def document_text(doc_id: str, max_chars: int = 200000) -> str:
+    """The text that was extracted + embedded from a document (its chunks, in order)."""
+    async with SessionLocal() as s:
+        rows = (await s.execute(select(KbChunk.content).where(KbChunk.document_id == uuid.UUID(doc_id))
+                                .order_by(KbChunk.chunk_index))).scalars().all()
+    body = "\n\n".join(rows)
+    return body if len(body) <= max_chars else body[:max_chars] + "\n…（截斷）"
+
+
+async def set_document_meta(doc_id: str, dataset_id, *, title=None, tags=None) -> bool:
+    """Edit a document's display title and/or topic tags. Scoped to dataset_id."""
+    async with SessionLocal() as s:
+        try:
+            d = await s.get(KbDocument, uuid.UUID(doc_id))
+        except ValueError:
+            return False
+        if d is None or d.dataset_id != dataset_id:
+            return False
+        if title is not None:
+            d.title = title.strip()[:600]
+        if tags is not None:
+            d.tags = [t.strip() for t in tags if t.strip()][:12]
+        await s.commit()
+    return True
 
 
 async def set_document_tags(doc_id: str, dataset_id, tags: list[str]) -> bool:
@@ -357,6 +433,7 @@ async def delete_document(doc_id: str, dataset_id=None) -> bool:
             return False
         if d is None or (dataset_id is not None and d.dataset_id != dataset_id):
             return False
+        _unlink_quietly(d.file_path)
         await s.execute(delete(KbChunk).where(KbChunk.document_id == d.id))
         await s.delete(d)
         await s.commit()

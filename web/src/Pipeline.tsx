@@ -241,6 +241,7 @@ export function EvidenceCard({ body, threadId }: { body: string; threadId: strin
 }
 
 const NOTE_LABEL: Record<string, string> = {
+  promote: "已從一般對話轉為研究專案",
   approved_plan: "計畫已核准 — 開始研究",
   reject_plan: "計畫退回 — 重新釐清與規劃",
   reject_accept: "結果退回 — 重做研究",

@@ -23,7 +23,8 @@ from .agent import user_message_content
 from .auth import (current_user, hash_password, identity_flags, is_faculty_email, make_token,
                    require_admin, verify_password)
 from .config import (AVAILABLE_MODELS, MAX_ITERATIONS_LIMIT, VALID_EFFORTS, VALID_MODEL_IDS, settings)
-from .db import Lab, LabMember, KbGrant, Message, Run, Thread, User, func, get_session, init_db, utcnow
+from .db import (KbDataset, KbGrant, Lab, LabMember, Message, Run, Thread, User, func,
+                 get_session, init_db, utcnow)
 from .tools.base import text_of
 
 ACTIVE = ("queued", "running")
@@ -114,6 +115,7 @@ async def _active_run(thread_id: uuid.UUID, s: AsyncSession) -> Run | None:
 def _thread_out(t: Thread, active: Run | None = None) -> dict:
     return {"id": str(t.id), "title": t.title, "domain": getattr(t, "domain", "plasma"),
             "mode": getattr(t, "mode", "chat"), "config": getattr(t, "config", None) or {},
+            "suggest_project": getattr(t, "suggest_project", None),
             "created_at": t.created_at.isoformat(),
             "updated_at": t.updated_at.isoformat(), "active_run_id": str(active.id) if active else None}
 
@@ -455,6 +457,20 @@ async def approve_gate(thread_id: str, body: ApproveIn | None = Body(default=Non
     return res
 
 
+@app.post("/api/threads/{thread_id}/promote")
+async def promote_thread(thread_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    """Promote a chat thread to a research project (user-initiated; never automatic)."""
+    t = await _own_thread(thread_id, user, s)
+    if getattr(t, "mode", "chat") != "chat":
+        raise HTTPException(400, "這個對話已經是研究專案")
+    if await _active_run(t.id, s):
+        raise HTTPException(409, "對話還在執行中，請等它結束再轉")
+    res = await pipeline.promote(t)
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("detail", "無法轉換"))
+    return res
+
+
 @app.post("/api/threads/{thread_id}/reject")
 async def reject_gate(thread_id: str, body: RejectIn, user: User = Depends(current_user),
                       s: AsyncSession = Depends(get_session)):
@@ -644,19 +660,22 @@ async def _ingest_thread_uploads(thread_id, owner_id, targets):
 # ------------------------------------------------------------------ shared base knowledge library
 
 async def _ingest_uploads(dsid, files: list[UploadFile]) -> list[dict]:
-    """Save each upload to a temp file and ingest it into `dsid`. Shared by base + lab uploads."""
-    import tempfile
+    """Persist each upload (so it can be previewed/downloaded) and ingest it into `dsid`.
+    Shared by base + lab uploads. The original file is kept under the KB files dir."""
     ingested = []
     for f in files:
-        name = Path(f.filename or "file").name
+        name = Path(f.filename or "file").name.replace("/", "_") or "file"
         data = await f.read()
-        with tempfile.NamedTemporaryFile(suffix="_" + name, delete=False) as tmp:
-            tmp.write(data)
-            path = Path(tmp.name)
-        try:
-            ingested.append(await kb.ingest_file(dsid, path, source=name))
-        finally:
-            path.unlink(missing_ok=True)
+        dest = kb.kb_files_dir() / f"{uuid.uuid4().hex}{Path(name).suffix.lower()}"
+        dest.write_bytes(data)
+        body = await asyncio.to_thread(kb.extract_text, dest)
+        if not body.strip():   # nothing to index (e.g. scanned image PDF) — don't keep an orphan file
+            dest.unlink(missing_ok=True)
+            ingested.append({"source": name, "chunks": 0, "skipped": "no extractable text"})
+            continue
+        mime = mimetypes.guess_type(name)[0] or f.content_type or "application/octet-stream"
+        ingested.append(await kb.ingest(dsid, name, body, title=name, file_path=str(dest),
+                                        byte_size=len(data), mime=mime))
     return ingested
 
 
@@ -681,6 +700,92 @@ async def kb_base_delete(doc_id: str, user: User = Depends(require_admin)):
     if not await kb.delete_document(doc_id, dataset_id=await kb.base_dataset_id()):
         raise HTTPException(404, "找不到文件")
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ unified KB document view / manage
+
+async def _kb_doc_access(doc_id: str, user: User, s: AsyncSession):
+    """Resolve a KB document and the caller's rights. (doc, can_manage); raises 404 if not viewable.
+    base: all may view, admin manages. lab: members view+manage. task: the thread owner."""
+    doc = await kb.get_document(doc_id)
+    if doc is None:
+        raise HTTPException(404, "找不到文件")
+    ds = await s.get(KbDataset, doc.dataset_id)
+    if ds is None:
+        raise HTTPException(404, "找不到文件")
+    can_view = can_manage = False
+    if ds.category == "base":
+        can_view, can_manage = True, identity_flags(user)["is_admin"]
+    elif ds.category == "lab":
+        m = (await s.execute(select(LabMember).where(LabMember.lab_id == ds.lab_id,
+                                                     LabMember.user_id == user.id))).scalar_one_or_none()
+        can_view = can_manage = m is not None
+    elif ds.category == "task":
+        t = await s.get(Thread, ds.thread_id)
+        can_view = can_manage = bool(t and t.user_id == user.id)
+    if not can_view:
+        raise HTTPException(404, "找不到文件")
+    return doc, can_manage
+
+
+@app.get("/api/kb/documents/{doc_id}/file")
+async def kb_doc_file(doc_id: str, download: int = 0, user: User = Depends(current_user),
+                      s: AsyncSession = Depends(get_session)):
+    """Serve a KB document's retained original file — inline (preview) or as a download."""
+    doc, _ = await _kb_doc_access(doc_id, user, s)
+    if not doc.file_path or not Path(doc.file_path).is_file():
+        raise HTTPException(404, "沒有可供檢視的原始檔（此文件在支援保留原始檔之前上傳）")
+    mime = doc.mime or mimetypes.guess_type(doc.source)[0] or "application/octet-stream"
+    inline = mime == "application/pdf" or mime == "text/plain" or mime.startswith("image/")
+    return FileResponse(Path(doc.file_path), media_type=mime, filename=doc.source,
+                        content_disposition_type="attachment" if download else ("inline" if inline else "attachment"))
+
+
+@app.get("/api/kb/documents/{doc_id}/text")
+async def kb_doc_text(doc_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    """The text extracted from the document and fed into embeddings (to inspect retrieval quality)."""
+    doc, _ = await _kb_doc_access(doc_id, user, s)
+    return {"text": await kb.document_text(doc_id), "source": doc.source}
+
+
+class DocMetaIn(BaseModel):
+    title: str | None = Field(default=None, max_length=600)
+    tags: list[str] | None = None
+
+
+@app.patch("/api/kb/documents/{doc_id}")
+async def kb_doc_edit(doc_id: str, body: DocMetaIn, user: User = Depends(current_user),
+                      s: AsyncSession = Depends(get_session)):
+    doc, can = await _kb_doc_access(doc_id, user, s)
+    if not can:
+        raise HTTPException(403, "沒有編輯這份文件的權限")
+    await kb.set_document_meta(doc_id, doc.dataset_id, title=body.title, tags=body.tags)
+    return {"ok": True}
+
+
+@app.post("/api/kb/documents/{doc_id}/replace")
+async def kb_doc_replace(doc_id: str, file: UploadFile = File(...), user: User = Depends(current_user),
+                         s: AsyncSession = Depends(get_session)):
+    """Replace a document's file with a new upload, re-ingesting while preserving its classification."""
+    doc, can = await _kb_doc_access(doc_id, user, s)
+    if not can:
+        raise HTTPException(403, "沒有替換這份文件的權限")
+    if not kb.enabled():
+        raise HTTPException(400, "知識庫未啟用（缺少 VOYAGE_API_KEY）")
+    data = await file.read()
+    name = Path(file.filename or doc.source).name
+    dest = kb.kb_files_dir() / f"{uuid.uuid4().hex}{Path(name).suffix.lower()}"
+    dest.write_bytes(data)
+    body = await asyncio.to_thread(kb.extract_text, dest)
+    if not body.strip():
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, "新檔案抽不到文字，未替換")
+    mime = mimetypes.guess_type(name)[0] or file.content_type or "application/octet-stream"
+    res = await kb.ingest(doc.dataset_id, doc.source, body, origin=doc.origin, kind=doc.kind,
+                          status=doc.status, source_thread_id=doc.source_thread_id, submitted_by=doc.submitted_by,
+                          tags=doc.tags, title=doc.title or doc.source, file_path=str(dest),
+                          byte_size=len(data), mime=mime)
+    return {"ok": True, **res}
 
 
 # ------------------------------------------------------------------ labs (實驗室) + per-lab KB
@@ -734,6 +839,26 @@ async def list_labs(user: User = Depends(current_user), s: AsyncSession = Depend
                              .where(LabMember.lab_id == lab.id))).scalar_one()
         out.append(_lab_out(lab, role, member_count=n))
     return {"labs": out, "can_create": identity_flags(user)["is_faculty"]}
+
+
+@app.get("/api/labs/notifications")
+async def lab_notifications(user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    """Badge counts for the 實驗室庫 button: items awaiting the user (as a lab owner) —
+    nominated notes pending review + incoming cross-lab grant requests. Declared before
+    /api/labs/{lab_id} so 'notifications' isn't captured as a lab id."""
+    owned = list((await s.execute(select(Lab.id).where(Lab.owner_id == user.id))).scalars().all())
+    if not owned:
+        return {"pending": 0, "requests": 0, "total": 0}
+    ds = list((await s.execute(select(KbDataset.id).where(KbDataset.category == "lab",
+                                                          KbDataset.lab_id.in_(owned)))).scalars().all())
+    pending = 0
+    if ds:
+        from .db import KbDocument
+        pending = (await s.execute(select(func.count()).select_from(KbDocument)
+                   .where(KbDocument.dataset_id.in_(ds), KbDocument.status == "pending"))).scalar_one()
+    requests = (await s.execute(select(func.count()).select_from(KbGrant)
+                .where(KbGrant.grantor_lab_id.in_(owned), KbGrant.status == "requested"))).scalar_one()
+    return {"pending": int(pending), "requests": int(requests), "total": int(pending) + int(requests)}
 
 
 @app.post("/api/labs")

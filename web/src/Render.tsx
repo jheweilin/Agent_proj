@@ -6,9 +6,12 @@ import remarkMath from "remark-math";
 import { Attachment, Block, fileUrl, fmtDuration, fmtSize, fmtTokens, modelName, RunInfo, ToolBlock, ToolProgress, zipUrl } from "./api";
 import { APP_NAME } from "./brand";
 import { Code } from "./Code";
-import { meta, ToolBody, toolSummary } from "./tools";
+import { KbDocResults, meta, parseJSON, ToolBody, toolSummary } from "./tools";
 
 export const FileOpenCtx = createContext<((path: string) => void) | null>(null);
+// open a knowledge-base document (lab/base/task) in the side panel — used by the kb_list tool view
+export type KbDocRef = { id: string; title?: string; source: string; mime?: string; has_file?: boolean };
+export const KbDocOpenCtx = createContext<((doc: KbDocRef) => void) | null>(null);
 
 const isWorkspacePath = (s: string) => s.startsWith("/workspace") || !/^[a-z]+:|^\/\/|^#/i.test(s);
 
@@ -110,6 +113,7 @@ function ToolStep({ b, threadId, selected, onSelect }:
   // one-line header by default; failed steps open themselves so problems are visible
   const open = userOpen ?? state === "error";
   if (b.name === "attach_files" && r && !r.is_error) return null;
+  if (b.name === "kb_list" && r && !r.is_error) return null;  // surfaced prominently in the turn body instead
   return (
     <div className={`step ${state} cat-${m.cat} ${selected ? "selected" : ""}`}>
       <div className="step-dot">{state === "running" ? <span className="spinner sm" /> : m.icon}</div>
@@ -138,7 +142,7 @@ function ToolStep({ b, threadId, selected, onSelect }:
 
 function StepGroup({ steps, threadId, selectedId, onSelect, live }:
   { steps: ToolBlock[]; threadId: string; selectedId?: string; onSelect: (b: ToolBlock) => void; live?: boolean }) {
-  const visible = steps.filter((s) => !(s.name === "attach_files" && s.result && !s.result.is_error));
+  const visible = steps.filter((s) => !(["attach_files", "kb_list"].includes(s.name) && s.result && !s.result.is_error));
   // finished turns start collapsed (one summary line); the turn that is running stays open
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const open = userOpen ?? !!live;
@@ -188,6 +192,7 @@ function AttFile({ f, threadId, onOpenFile }:
 function Attachments({ files, threadId, onOpenFile }:
   { files: Attachment[]; threadId: string; onOpenFile: (path: string) => void }) {
   const [showSecondary, setShowSecondary] = useState(false);
+  const [lightbox, setLightbox] = useState<string | null>(null);  // image path shown enlarged
   if (!files.length) return null;
   const seen = new Set<string>();
   const uniq = files.filter((f) => (seen.has(f.path) ? false : (seen.add(f.path), true)));
@@ -210,11 +215,11 @@ function Attachments({ files, threadId, onOpenFile }:
           <div className="results-sub">圖片（{images.length}）</div>
           <div className="att-grid">{images.map((f) => (
             <figure key={f.path} className="att-img">
-              <img src={fileUrl(threadId, f.path)} alt={f.name} loading="lazy" onClick={() => onOpenFile(f.path)} title="點擊在右側預覽" />
+              <img src={fileUrl(threadId, f.path)} alt={f.name} loading="lazy" onClick={() => setLightbox(f.path)} title="點擊放大預覽" />
               <figcaption>
                 <span className="att-cap" title={f.path}>{f.name}</span>
                 <span className="muted small">{fmtSize(f.size)}</span>
-                <button className="icon" onClick={() => onOpenFile(f.path)}>預覽</button>
+                <button className="icon" onClick={() => setLightbox(f.path)}>預覽</button>
                 <a className="icon" href={fileUrl(threadId, f.path, true)}>下載</a>
               </figcaption>
             </figure>
@@ -239,6 +244,16 @@ function Attachments({ files, threadId, onOpenFile }:
             <AttFile key={f.path} f={f} threadId={threadId} onOpenFile={onOpenFile} />
           ))}</div>}
         </>
+      )}
+      {lightbox && (
+        <div className="lightbox" onClick={() => setLightbox(null)}>
+          <img src={fileUrl(threadId, lightbox)} alt={lightbox.split("/").pop() || ""} onClick={(e) => e.stopPropagation()} />
+          <div className="lightbox-bar" onClick={(e) => e.stopPropagation()}>
+            <span className="mono small">{lightbox.split("/").pop()}</span>
+            <a className="btn ghost small" href={fileUrl(threadId, lightbox, true)}>下載</a>
+            <button className="icon" onClick={() => setLightbox(null)} aria-label="關閉">✕</button>
+          </div>
+        </div>
       )}
     </section>
   );
@@ -299,6 +314,12 @@ export function AssistantTurn({ blocks, attachments, threadId, live, run, roleLa
       </div>
       <div className="turn-body">
         {parts}
+        {(() => {
+          // surface kb_list results as a clickable document card (the step itself is hidden)
+          const docs = (blocks as any[]).filter((b) => b.type === "tool" && b.name === "kb_list" && b.result && !b.result.is_error)
+            .flatMap((b) => parseJSON(b.result?.output ?? b.result?.preview)?.documents ?? []);
+          return docs.length ? <KbDocResults docs={docs} /> : null;
+        })()}
         <Attachments files={attachments} threadId={threadId} onOpenFile={onOpenFile} />
         {!live && <RunMeta run={run} />}
       </div>
