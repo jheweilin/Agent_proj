@@ -43,6 +43,27 @@ def _write(thread_id: str, name: str, payload: dict) -> None:
 
 
 @tool(
+    "record_plan",
+    """把這份計畫的「執行步驟」記成結構化清單，讓使用者在核准關卡可以逐項勾選與編輯（規劃階段結束前一定要呼叫）。
+步驟要具體、可執行、有先後順序；數值方法或參數有依據的標來源，沒有的標「假設」。""",
+    {
+        "steps": {"type": "array", "minItems": 1,
+                  "items": {"type": "object", "additionalProperties": False,
+                            "properties": {
+                                "title": {"type": "string", "description": "這一步要做什麼，一句話"},
+                                "detail": {"type": "string", "description": "做法與要檢查什麼；沒有就空字串"},
+                                "source": {"type": "string", "description": "依據的文獻標題/DOI；若是自訂假設就填「假設」，沒有就空字串"}},
+                            "required": ["title", "detail", "source"]}},
+    },
+    ["steps"],
+)
+async def record_plan(ctx: ToolContext, args: dict) -> ToolResult:
+    _write(ctx.thread_id, "plan.json", {"steps": args["steps"]})
+    n = len(args["steps"])
+    return ToolResult(f"已記錄 {n} 個執行步驟，等待使用者在核准關卡逐項確認。", preview=f"計畫 {n} 步")
+
+
+@tool(
     "record_replication",
     """記錄你（第二實作）獨立重做後得到的關鍵數值，供程式和研究者的結果對照（第二實作階段結束前呼叫）。
 只記你自己算出來的，不要抄別人的。""",

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, getToken, setToken, DomainChoice, Thread, User } from "./api";
+import { api, getToken, setToken, DomainChoice, Thread, ThreadConfig, User } from "./api";
 import { APP_NAME } from "./brand";
 import Chat, { EXAMPLES } from "./Chat";
 import KbLibrary from "./KbLibrary";
 import LabLibrary from "./LabLibrary";
+import LabDirectory from "./LabDirectory";
 import Login from "./Login";
+import NewThreadModal from "./NewThreadModal";
 
 type Theme = "auto" | "light" | "dark";
 
@@ -59,10 +61,10 @@ export default function App() {
   const [theme, setTheme] = useTheme();
   const [domainList, setDomainList] = useState<DomainChoice[]>(
     [{ name: "plasma", label: "電漿物理" }, { name: "general", label: "通用研究" }]);
-  const [newDomain, setNewDomain] = useState("plasma");
-  const [newMode, setNewMode] = useState("chat");
   const [kbOpen, setKbOpen] = useState(false);
   const [labOpen, setLabOpen] = useState(false);
+  const [dirOpen, setDirOpen] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
 
   useEffect(() => {
     if (!getToken()) { setChecking(false); return; }
@@ -95,8 +97,8 @@ export default function App() {
   if (checking) return <div className="center muted">載入中…</div>;
   if (!user) return <Login onLogin={(u) => setUser(u)} />;
 
-  const newThread = async (prompt?: string, domain?: string, mode?: string) => {
-    const t = await api.createThread(domain ?? newDomain, mode ?? newMode);
+  const createThread = async (opts: { domain: string; mode: string; config?: ThreadConfig }, prompt?: string) => {
+    const t = await api.createThread(opts.domain, opts.mode, opts.config);
     setThreads((ts) => [t, ...ts]);
     setPending(prompt ?? null);
     setCurrent(t.id);
@@ -131,17 +133,11 @@ export default function App() {
           對話{threads.length ? <span className="muted"> {threads.length}</span> : null}
         </button>
         <span className="topdiv" />
-        <div className="mode-seg" title="一般對話＝單一助理；研究專案＝釐清→規劃→核准→研究→驗收的九階段流程">
-          <button className={newMode === "chat" ? "on" : ""} onClick={() => setNewMode("chat")}>一般對話</button>
-          <button className={newMode === "project" ? "on" : ""} onClick={() => setNewMode("project")}>研究專案</button>
-        </div>
-        <select className="domain-select" value={newDomain} title="選擇研究領域" onChange={(e) => setNewDomain(e.target.value)}>
-          {domainList.map((d) => <option key={d.name} value={d.name}>{d.label}</option>)}
-        </select>
-        <button className="btn primary small" onClick={() => newThread()}>{newMode === "project" ? "＋ 新專案" : "＋ 新研究"}</button>
+        <button className="btn primary small" onClick={() => setNewOpen(true)}>＋ 新研究</button>
         <span className="spacer" />
         <button className="topbtn" title="共用基礎知識庫" onClick={() => setKbOpen(true)}>基礎庫</button>
         <button className="topbtn" title="實驗室共用知識庫" onClick={() => setLabOpen(true)}>實驗室庫</button>
+        <button className="topbtn" title="跨實驗室專長名錄" onClick={() => setDirOpen(true)}>名錄</button>
         <button className="topbtn" title="切換主題" onClick={() => setTheme(nextTheme[theme])}>{themeLabel[theme]}</button>
         <span className="avatar user" title={`${user.name}\n${user.email}`}>{(user.name || user.email)[0]?.toUpperCase()}</span>
         <button className="topbtn" title="登出" onClick={() => { setToken(null); setUser(null); setThreads([]); setCurrent(null); }}>登出</button>
@@ -190,7 +186,7 @@ export default function App() {
                   <span key={s} className={`flow-step${gate ? " gate" : ""}`} data-tip={tip}>{s}</span>
                 ))}
               </nav>
-              <button className="btn primary lg" onClick={() => newThread()}>開始新研究</button>
+              <button className="btn primary lg" onClick={() => setNewOpen(true)}>開始新研究</button>
             </header>
             <section className="caps">
               {CAPS.map((c) => (
@@ -204,7 +200,8 @@ export default function App() {
               <div className="examples-title">試試這些問題</div>
               <div className="example-list">
                 {EXAMPLES.map((ex) => (
-                  <button key={ex.title} className="example" onClick={() => newThread(ex.text, ex.domain, "chat")}>
+                  <button key={ex.title} className="example"
+                          onClick={() => createThread({ domain: ex.domain, mode: "chat" }, ex.text)}>
                     <span className="ex-t">{ex.title}</span><span className="ex-d">{ex.text}</span>
                   </button>
                 ))}
@@ -215,6 +212,10 @@ export default function App() {
       </main>
       {kbOpen && <KbLibrary onClose={() => setKbOpen(false)} />}
       {labOpen && <LabLibrary user={user} onClose={() => setLabOpen(false)} />}
+      {dirOpen && <LabDirectory onClose={() => setDirOpen(false)} />}
+      {newOpen && <NewThreadModal domains={domainList} defaultDomain={domainList[0]?.name ?? "plasma"}
+        defaultMode="chat" onClose={() => setNewOpen(false)}
+        onCreate={(o) => { setNewOpen(false); createThread(o); }} />}
     </div>
   );
 }

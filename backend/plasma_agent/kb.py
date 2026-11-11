@@ -27,11 +27,18 @@ def enabled() -> bool:
 
 
 async def _voyage(path: str, payload: dict) -> dict:
+    import asyncio
     async with httpx.AsyncClient(timeout=90) as c:
-        r = await c.post(f"{VOYAGE}/{path}",
-                         headers={"Authorization": f"Bearer {settings.voyage_api_key}"}, json=payload)
-        r.raise_for_status()
-        return r.json()
+        for attempt in range(5):  # Voyage rate limits (429) are common on the low tier — back off and retry
+            r = await c.post(f"{VOYAGE}/{path}",
+                             headers={"Authorization": f"Bearer {settings.voyage_api_key}"}, json=payload)
+            if r.status_code == 429 and attempt < 4:
+                wait = float(r.headers.get("retry-after") or (2 ** attempt))
+                log.warning("voyage %s rate-limited (429); retrying in %.1fs", path, wait)
+                await asyncio.sleep(wait)
+                continue
+            r.raise_for_status()
+            return r.json()
 
 
 async def embed(texts: list[str], input_type: str) -> list[list[float]]:
@@ -107,8 +114,13 @@ async def get_or_create_dataset(thread_id, owner_id=None, category: str = "task"
         return ds.id
 
 
-async def ingest(dataset_id, source: str, body: str) -> dict:
-    """Chunk + embed `body` and store it under `source`, replacing any earlier copy of that source."""
+async def ingest(dataset_id, source: str, body: str, *, origin: str = "upload", kind: str = "reference",
+                 status: str = "approved", source_thread_id=None, submitted_by=None, tags=None) -> dict:
+    """Chunk + embed `body` and store it under `source`, replacing any earlier copy of that source.
+
+    The keyword metadata drives the knowledge flywheel (see docs/LAB_KNOWLEDGE_PLAN.md): manual
+    uploads keep the defaults (upload/reference/approved); a nominated research experience is stored
+    as research/experience/pending until a lab owner approves it (only `approved` is retrievable)."""
     chunks = chunk_text(body)
     if not chunks:
         return {"source": source, "chunks": 0}
@@ -119,7 +131,9 @@ async def ingest(dataset_id, source: str, body: str) -> dict:
         for d in old:
             await s.execute(delete(KbChunk).where(KbChunk.document_id == d.id))
             await s.delete(d)
-        doc = KbDocument(dataset_id=dataset_id, source=source, file_hash=fh, n_chunks=len(chunks))
+        doc = KbDocument(dataset_id=dataset_id, source=source, file_hash=fh, n_chunks=len(chunks),
+                         origin=origin, kind=kind, status=status,
+                         source_thread_id=source_thread_id, submitted_by=submitted_by, tags=list(tags or []))
         s.add(doc)
         await s.flush()
         vecs = await embed(chunks, "document")
@@ -127,7 +141,8 @@ async def ingest(dataset_id, source: str, body: str) -> dict:
             s.add(KbChunk(dataset_id=dataset_id, document_id=doc.id, chunk_index=i,
                           content=ch, embedding=v, meta={"source": source}))
         await s.commit()
-    return {"source": source, "chunks": len(chunks)}
+        doc_id = str(doc.id)
+    return {"id": doc_id, "source": source, "chunks": len(chunks)}
 
 
 async def ingest_file(dataset_id, path: Path, source: str | None = None) -> dict:
@@ -174,7 +189,7 @@ async def search(dataset_ids: list[uuid.UUID], query: str, top_k: int = 5, pool:
         rows = (await s.execute(
             select(KbChunk.content, KbDocument.source, KbChunk.chunk_index, dist)
             .join(KbDocument, KbDocument.id == KbChunk.document_id)
-            .where(KbChunk.dataset_id.in_(dataset_ids))
+            .where(KbChunk.dataset_id.in_(dataset_ids), KbDocument.status == "approved")
             .order_by(dist).limit(pool))).all()
     cand = [{"content": r[0], "source": r[1], "chunk": r[2], "distance": round(float(r[3]), 4)} for r in rows]
     if not cand:
@@ -194,6 +209,7 @@ async def read_document(dataset_ids: list[uuid.UUID], source: str, max_chars: in
     """Return the full text of a stored document (its chunks joined), matched by source name."""
     async with SessionLocal() as s:
         doc = (await s.execute(select(KbDocument).where(KbDocument.dataset_id.in_(dataset_ids),
+                                                        KbDocument.status == "approved",
                                                         KbDocument.source.ilike(f"%{source}%"))
                                .order_by(KbDocument.created_at.desc()))).scalars().first()
         if doc is None:
@@ -204,17 +220,50 @@ async def read_document(dataset_ids: list[uuid.UUID], source: str, max_chars: in
     return body if len(body) <= max_chars else body[:max_chars] + "\n…（截斷）"
 
 
+async def profile_material(dataset_id, max_docs: int = 40, max_chunks: int = 30) -> dict:
+    """Material for an LLM specialty-profile draft: approved doc titles + a sample of their text."""
+    async with SessionLocal() as s:
+        docs = (await s.execute(select(KbDocument.source).where(KbDocument.dataset_id == dataset_id,
+                KbDocument.status == "approved").order_by(KbDocument.created_at.desc()).limit(max_docs))).scalars().all()
+        chunks = (await s.execute(select(KbChunk.content).join(KbDocument, KbDocument.id == KbChunk.document_id)
+                .where(KbChunk.dataset_id == dataset_id, KbDocument.status == "approved")
+                .order_by(KbChunk.chunk_index).limit(max_chunks))).scalars().all()
+    return {"sources": list(docs), "excerpts": [c[:600] for c in chunks]}
+
+
 async def base_dataset_id() -> uuid.UUID:
     """The shared base library — searchable from every thread (see datasets_for_thread)."""
     return await get_or_create_dataset(None, category="base", name="基礎庫")
 
 
-async def list_documents(dataset_id) -> list[dict]:
+async def list_documents(dataset_id, status: str | None = "approved") -> list[dict]:
+    """List a dataset's documents. `status=None` lists every status; defaults to approved only
+    (so the lab library shows live docs; the pending review queue passes status="pending")."""
     async with SessionLocal() as s:
-        rows = (await s.execute(select(KbDocument).where(KbDocument.dataset_id == dataset_id)
-                                .order_by(KbDocument.created_at.desc()))).scalars().all()
+        q = select(KbDocument).where(KbDocument.dataset_id == dataset_id)
+        if status is not None:
+            q = q.where(KbDocument.status == status)
+        rows = (await s.execute(q.order_by(KbDocument.created_at.desc()))).scalars().all()
     return [{"id": str(d.id), "source": d.source, "chunks": d.n_chunks,
+             "origin": d.origin, "kind": d.kind, "status": d.status,
+             "source_thread_id": str(d.source_thread_id) if d.source_thread_id else None,
+             "submitted_by": str(d.submitted_by) if d.submitted_by else None,
              "created_at": d.created_at.isoformat()} for d in rows]
+
+
+async def set_document_status(doc_id: str, dataset_id, status: str) -> bool:
+    """Approve/reject a document (owner review). Scoped to `dataset_id` so a doc id from another
+    collection can't be flipped. Returns False if not found / not in that dataset."""
+    async with SessionLocal() as s:
+        try:
+            d = await s.get(KbDocument, uuid.UUID(doc_id))
+        except ValueError:
+            return False
+        if d is None or d.dataset_id != dataset_id:
+            return False
+        d.status = status
+        await s.commit()
+    return True
 
 
 async def delete_document(doc_id: str, dataset_id=None) -> bool:

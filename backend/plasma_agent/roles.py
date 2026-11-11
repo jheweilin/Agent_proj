@@ -12,6 +12,9 @@ from dataclasses import dataclass
 # tools a read-only reviewer may use (look, search, record findings — never execute or write)
 READONLY_TOOLS = {"read_file", "list_files", "see_image", "kb_search", "kb_read", "record_review"}
 
+# the only tool the planner may use: record its execution steps as an editable checklist
+PLANNER_TOOLS = {"record_plan"}
+
 
 @dataclass(frozen=True)
 class Role:
@@ -24,6 +27,8 @@ class Role:
         """The tool names this role may use, given the domain's concrete tool set."""
         if self.tool_mode == "none":
             return set()
+        if self.tool_mode == "plan":   # planner: only record_plan (structured steps for approval)
+            return {n for n in domain_set if n in PLANNER_TOOLS}
         if self.tool_mode == "readonly":
             return {n for n in domain_set if n in READONLY_TOOLS}
         if self.tool_mode == "replicate":  # independent redo: no KB/web/comsol, no other verdict tools
@@ -52,23 +57,27 @@ CLARIFIER = Role(
 
 PLANNER = Role(
     name="planner", label="規劃",
-    tool_mode="none",
+    tool_mode="plan",
     overlay="""
 # 目前階段：規劃（Planner）
 
-你現在要根據前面的「釐清結果」和「檢索證據」設計一份**具體的模擬／分析計畫**，交給使用者核准。這一步**不要執行任何計算、不要用工具**，只輸出計畫，然後結束回合。
+你現在要根據前面的「釐清結果」和「檢索證據」設計一份**具體的模擬／分析計畫**，交給使用者核准。這一步**不要執行任何計算**；除了最後呼叫 `record_plan` 之外，不要使用其他工具。
 
 重要：計畫裡的關鍵參數與方法選擇，凡是有對應到上文「檢索證據」段落的，要**標明來源**（引用該文獻的標題或 DOI）；沒有來源支持的，標成「假設」。不要杜撰數據或來源。
 
-用繁體中文輸出，結構如下：
+請依下列順序完成這一回合：
+
+**第一步：呼叫 `record_plan`**，把你的「執行步驟」記成結構化清單（每項：title 一句話說明要做什麼、detail 做法與要檢查什麼、source 文獻標題/DOI 或「假設」）。這份清單會讓使用者在核准關卡**逐項勾選與微調**，所以步驟要具體、可執行、有先後順序（通常先小案例驗證、再放大、再分析）。
+
+**第二步：輸出完整的文字計畫**作為這一回合**最後的回覆**（結束回合，不要再補任何結語）。用繁體中文，結構如下：
 1. **目標**：這次要產出什麼、如何算成功。
 2. **方法與控制方程**：模型、方程式、求解器或工具、座標與單位。
 3. **關鍵參數**：逐項列出數值與單位，並標來源（文獻或假設）。
-4. **執行步驟**：先小案例、再放大；每步要檢查什麼。
+4. **執行步驟**：和 record_plan 記的一致，逐步寫清楚。
 5. **驗收標準**：用什麼判斷結果正確（解析解、守恆量、收斂、與文獻比對）。
 6. **風險與備案**：可能卡住的地方與替代做法。
 
-這份計畫會送交使用者核准；核准後才會進入研究階段。
+這份計畫會送交使用者核准；核准後才會依使用者**最終確認的步驟**進入研究階段。
 """.strip(),
 )
 

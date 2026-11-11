@@ -9,7 +9,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -18,11 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import secrets
 
-from . import domains, events, kb, pipeline, sandbox
+from . import domains, events, kb, pipeline, roles, sandbox
 from .agent import user_message_content
 from .auth import (current_user, hash_password, identity_flags, is_faculty_email, make_token,
                    require_admin, verify_password)
-from .config import settings
+from .config import (AVAILABLE_MODELS, MAX_ITERATIONS_LIMIT, VALID_EFFORTS, VALID_MODEL_IDS, settings)
 from .db import Lab, LabMember, Message, Run, Thread, User, func, get_session, init_db, utcnow
 from .tools.base import text_of
 
@@ -113,8 +113,40 @@ async def _active_run(thread_id: uuid.UUID, s: AsyncSession) -> Run | None:
 
 def _thread_out(t: Thread, active: Run | None = None) -> dict:
     return {"id": str(t.id), "title": t.title, "domain": getattr(t, "domain", "plasma"),
-            "mode": getattr(t, "mode", "chat"), "created_at": t.created_at.isoformat(),
+            "mode": getattr(t, "mode", "chat"), "config": getattr(t, "config", None) or {},
+            "created_at": t.created_at.isoformat(),
             "updated_at": t.updated_at.isoformat(), "active_run_id": str(active.id) if active else None}
+
+
+# agent slots a user can assign a model to (chat agent + the six pipeline LLM roles)
+AGENT_SLOTS = ([{"key": "chat", "label": "一般對話助理", "modes": ["chat"]}]
+               + [{"key": r.name, "label": r.label, "modes": ["project"]} for r in roles.ROLES.values()])
+_AGENT_KEYS = {a["key"] for a in AGENT_SLOTS}
+
+
+def _sanitize_config(cfg: dict | None) -> dict:
+    """Keep only valid, whitelisted values from a client-supplied thread config."""
+    if not isinstance(cfg, dict):
+        return {}
+    out: dict = {}
+    models = cfg.get("models")
+    if isinstance(models, dict):
+        clean = {k: v for k, v in models.items()
+                 if k in _AGENT_KEYS and isinstance(v, str) and v in VALID_MODEL_IDS}
+        if clean:
+            out["models"] = clean
+    if cfg.get("effort") in VALID_EFFORTS:
+        out["effort"] = cfg["effort"]
+    mi = cfg.get("max_iterations")
+    if isinstance(mi, int) and not isinstance(mi, bool):
+        out["max_iterations"] = max(1, min(MAX_ITERATIONS_LIMIT, mi))
+    return out
+
+
+@app.get("/api/models")
+async def list_models(user: User = Depends(current_user)):
+    return {"models": AVAILABLE_MODELS, "default_model": settings.model, "agents": AGENT_SLOTS,
+            "defaults": {"effort": settings.effort, "max_iterations": settings.max_iterations}}
 
 
 @app.get("/api/domains")
@@ -133,12 +165,14 @@ class ThreadIn(BaseModel):
     title: str | None = None
     domain: str | None = None
     mode: str | None = None
+    config: dict | None = None
 
 
 @app.post("/api/threads")
 async def create_thread(body: ThreadIn, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
     mode = "project" if body.mode == "project" else "chat"
-    t = Thread(user_id=user.id, title=(body.title or "新對話")[:300], domain=domains.get(body.domain).name, mode=mode)
+    t = Thread(user_id=user.id, title=(body.title or "新對話")[:300], domain=domains.get(body.domain).name, mode=mode,
+               config=_sanitize_config(body.config))
     s.add(t)
     await s.commit()
     sandbox.workspace_dir(str(t.id)).mkdir(parents=True, exist_ok=True)
@@ -394,13 +428,28 @@ class RejectIn(BaseModel):
     feedback: str | None = Field(default=None, max_length=10000)
 
 
+class PlanStepIn(BaseModel):
+    title: str = Field(default="", max_length=600)
+    detail: str = Field(default="", max_length=4000)
+    source: str = Field(default="", max_length=600)
+    enabled: bool = True
+
+
+class ApproveIn(BaseModel):
+    plan_steps: list[PlanStepIn] | None = Field(default=None, max_length=100)
+
+
 @app.post("/api/threads/{thread_id}/approve")
-async def approve_gate(thread_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
-    """Pass the current human gate: approve the plan (→ research) or accept the results (→ done)."""
+async def approve_gate(thread_id: str, body: ApproveIn | None = Body(default=None),
+                       user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    """Pass the current human gate: approve the plan (→ research) or accept the results (→ done).
+
+    The plan gate may carry the user's edited/checked step checklist (`plan_steps`)."""
     t = await _own_thread(thread_id, user, s)
     if await _active_run(t.id, s):
         raise HTTPException(409, "這個專案還在執行中")
-    res = await pipeline.approve(t)
+    steps = [st.model_dump() for st in body.plan_steps] if body and body.plan_steps is not None else None
+    res = await pipeline.approve(t, steps)
     if not res.get("ok"):
         raise HTTPException(400, res.get("detail", "目前無法核准"))
     return res
@@ -417,6 +466,31 @@ async def reject_gate(thread_id: str, body: RejectIn, user: User = Depends(curre
     if not res.get("ok"):
         raise HTTPException(400, res.get("detail", "目前無法退回"))
     return res
+
+
+class NominateIn(BaseModel):
+    lab_id: str = Field(min_length=1)
+
+
+@app.post("/api/threads/{thread_id}/nominate")
+async def nominate(thread_id: str, body: NominateIn,
+                   user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    """Nominate a finished research project into a lab KB as a pending experience note (閘門①).
+
+    Any lab member may nominate their own completed project; a lab owner approves it before it
+    becomes retrievable (see docs/LAB_KNOWLEDGE_PLAN.md). The LLM summary + embedding run in the
+    worker (it has Bedrock creds) — enqueued here; the card is marked 'generating' immediately."""
+    t = await _own_thread(thread_id, user, s)
+    if not kb.enabled():
+        raise HTTPException(400, "知識庫未啟用（缺少 VOYAGE_API_KEY）")
+    p = await pipeline.gate_status(t.id)
+    if p is None or p.status != "completed":
+        raise HTTPException(400, "只有已完成（通過驗收）的研究專案可以提名納入實驗室庫")
+    lab, _ = await _membership(body.lab_id, user, s)   # 404 if the user isn't a member of that lab
+    await pipeline.mark_nomination(t.id, lab.id, lab.name, "generating")
+    await events.enqueue_nomination({"thread_id": str(t.id), "user_id": str(user.id),
+                                     "lab_id": str(lab.id), "lab_name": lab.name})
+    return {"ok": True, "status": "generating", "lab_id": str(lab.id), "lab_name": lab.name}
 
 
 @app.get("/api/runs/{run_id}/events")
@@ -533,8 +607,8 @@ async def download_zip(thread_id: str, path: list[str] = Query(default=[]), name
 
 
 @app.post("/api/threads/{thread_id}/upload")
-async def upload(thread_id: str, files: list[UploadFile] = File(...), user: User = Depends(current_user),
-                 s: AsyncSession = Depends(get_session)):
+async def upload(thread_id: str, background: BackgroundTasks, files: list[UploadFile] = File(...),
+                 user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
     t = await _own_thread(thread_id, user, s)
     dest = sandbox.workspace_dir(str(t.id)) / "uploads"
     dest.mkdir(parents=True, exist_ok=True)
@@ -548,19 +622,23 @@ async def upload(thread_id: str, files: list[UploadFile] = File(...), user: User
         cpath = f"/workspace/uploads/{name}"
         saved.append(cpath)
         targets.append((target, cpath))
-    # index text/PDF uploads into this thread's task knowledge base (best-effort)
-    ingested = []
-    if kb.enabled():
-        try:
-            dsid = await kb.get_or_create_dataset(t.id, owner_id=user.id, category="task", name="任務資料")
-            for target, cpath in targets:
-                info = await kb.ingest_file(dsid, target, source=cpath)
-                if info.get("chunks"):
-                    ingested.append(info)
-        except Exception:
-            import logging
-            logging.getLogger("plasma_agent.api").exception("kb ingest failed")
-    return {"paths": saved, "kb": ingested}
+    # Files are on disk and usable immediately; index them into the task knowledge base
+    # in the background so the upload request returns without waiting on embedding.
+    kb_pending = kb.enabled()
+    if kb_pending:
+        background.add_task(_ingest_thread_uploads, t.id, user.id, targets)
+    return {"paths": saved, "kb_pending": kb_pending}
+
+
+async def _ingest_thread_uploads(thread_id, owner_id, targets):
+    """Embed uploaded files into the thread's task KB (runs after the upload response is sent)."""
+    try:
+        dsid = await kb.get_or_create_dataset(thread_id, owner_id=owner_id, category="task", name="任務資料")
+        for target, cpath in targets:
+            await kb.ingest_file(dsid, target, source=cpath)
+    except Exception:
+        import logging
+        logging.getLogger("plasma_agent.api").exception("kb ingest failed")
 
 
 # ------------------------------------------------------------------ shared base knowledge library
@@ -609,9 +687,12 @@ async def kb_base_delete(doc_id: str, user: User = Depends(require_admin)):
 
 def _lab_out(lab: Lab, role: str, member_count: int | None = None) -> dict:
     out = {"id": str(lab.id), "name": lab.name, "role": role, "owner_id": str(lab.owner_id),
-           "created_at": lab.created_at.isoformat()}
+           "created_at": lab.created_at.isoformat(),
+           "summary": lab.summary, "keywords": lab.keywords or [], "is_public": lab.is_public}
     if role == "owner":
         out["join_code"] = lab.join_code  # only the owner sees/shares the join code
+        out["profile_draft"] = lab.profile_draft
+        out["profile_status"] = lab.profile_status
     if member_count is not None:
         out["member_count"] = member_count
     return out
@@ -680,6 +761,23 @@ async def join_lab(body: JoinIn, user: User = Depends(current_user), s: AsyncSes
     return _lab_out(lab, exists.role if exists else "member")
 
 
+@app.get("/api/labs/directory")
+async def lab_directory(user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    """Public cross-lab specialty directory (L2): every lab that opted in (is_public). Content stays
+    private — this is only the specialty card, for discovering who to ask for collaboration.
+
+    Declared before /api/labs/{lab_id} so 'directory' isn't captured as a lab id."""
+    labs = (await s.execute(select(Lab).where(Lab.is_public.is_(True)).order_by(Lab.name))).scalars().all()
+    mine = set((await s.execute(select(LabMember.lab_id).where(LabMember.user_id == user.id))).scalars().all())
+    out = []
+    for lab in labs:
+        n = (await s.execute(select(func.count()).select_from(LabMember)
+                             .where(LabMember.lab_id == lab.id))).scalar_one()
+        out.append({"id": str(lab.id), "name": lab.name, "summary": lab.summary,
+                    "keywords": lab.keywords or [], "member_count": n, "is_member": lab.id in mine})
+    return {"labs": out}
+
+
 @app.get("/api/labs/{lab_id}")
 async def lab_detail(lab_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
     lab, m = await _membership(lab_id, user, s)
@@ -734,6 +832,40 @@ async def regenerate_code(lab_id: str, user: User = Depends(current_user), s: As
     return {"join_code": lab.join_code}
 
 
+class ProfileIn(BaseModel):
+    summary: str = Field(default="", max_length=4000)
+    keywords: list[str] = Field(default_factory=list)
+    is_public: bool = False
+
+
+@app.put("/api/labs/{lab_id}/profile")
+async def set_lab_profile(lab_id: str, body: ProfileIn, user: User = Depends(current_user),
+                          s: AsyncSession = Depends(get_session)):
+    """Owner edits the lab's public specialty card and toggles directory visibility."""
+    lab, m = await _membership(lab_id, user, s)
+    if m.role != "owner":
+        raise HTTPException(403, "只有實驗室負責人可以編輯專長名片")
+    lab.summary = body.summary.strip()
+    lab.keywords = [k.strip() for k in body.keywords if k.strip()][:8]
+    lab.is_public = body.is_public
+    await s.commit()
+    return _lab_out(lab, m.role)
+
+
+@app.post("/api/labs/{lab_id}/profile/draft")
+async def draft_lab_profile(lab_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    """Owner asks the LLM to draft a specialty card from the lab KB (runs in the worker)."""
+    lab, m = await _membership(lab_id, user, s)
+    if m.role != "owner":
+        raise HTTPException(403, "只有實驗室負責人可以產生草稿")
+    if not kb.enabled():
+        raise HTTPException(400, "知識庫未啟用（缺少 VOYAGE_API_KEY）")
+    lab.profile_status = "generating"
+    await s.commit()
+    await events.enqueue_lab_profile(str(lab.id))
+    return {"ok": True, "status": "generating"}
+
+
 @app.get("/api/labs/{lab_id}/kb")
 async def lab_kb_list(lab_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
     lab, _ = await _membership(lab_id, user, s)
@@ -759,6 +891,45 @@ async def lab_kb_delete(lab_id: str, doc_id: str, user: User = Depends(current_u
     dsid = await kb.lab_dataset_id(lab.id, name=lab.name)
     if not await kb.delete_document(doc_id, dataset_id=dsid):
         raise HTTPException(404, "找不到文件")
+    return {"ok": True}
+
+
+@app.get("/api/labs/{lab_id}/kb/pending")
+async def lab_kb_pending(lab_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    """Documents nominated into this lab KB, awaiting the owner's review (閘門①). Owner only."""
+    lab, m = await _membership(lab_id, user, s)
+    if m.role != "owner":
+        raise HTTPException(403, "只有實驗室負責人可以審核待納入的知識")
+    if not kb.enabled():
+        return {"enabled": False, "documents": []}
+    docs = await kb.list_documents(await kb.lab_dataset_id(lab.id, name=lab.name), status="pending")
+    # resolve submitter names so the owner knows who nominated each note
+    uids = {d["submitted_by"] for d in docs if d.get("submitted_by")}
+    names: dict[str, str] = {}
+    if uids:
+        rows = (await s.execute(select(User).where(User.id.in_([uuid.UUID(u) for u in uids])))).scalars().all()
+        names = {str(u.id): (u.name or u.email) for u in rows}
+    for d in docs:
+        d["submitted_by_name"] = names.get(d.get("submitted_by") or "", "")
+    return {"enabled": True, "documents": docs}
+
+
+@app.post("/api/labs/{lab_id}/kb/pending/{doc_id}/{action}")
+async def lab_kb_review(lab_id: str, doc_id: str, action: str, user: User = Depends(current_user),
+                        s: AsyncSession = Depends(get_session)):
+    """Approve (→ retrievable) or reject (→ deleted) a nominated experience note. Owner only."""
+    if action not in ("approve", "reject"):
+        raise HTTPException(404, "未知的動作")
+    lab, m = await _membership(lab_id, user, s)
+    if m.role != "owner":
+        raise HTTPException(403, "只有實驗室負責人可以審核")
+    dsid = await kb.lab_dataset_id(lab.id, name=lab.name)
+    if action == "approve":
+        ok = await kb.set_document_status(doc_id, dsid, "approved")
+    else:
+        ok = await kb.delete_document(doc_id, dataset_id=dsid)
+    if not ok:
+        raise HTTPException(404, "找不到待審文件")
     return {"ok": True}
 
 

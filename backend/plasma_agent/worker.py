@@ -7,7 +7,7 @@ import signal
 
 from sqlalchemy import update
 
-from . import events, sandbox
+from . import events, labs, pipeline, sandbox
 from .agent import execute_run
 from .config import settings
 from .db import Run, SessionLocal, init_db, utcnow
@@ -91,7 +91,7 @@ async def main() -> None:
     while not stop.is_set():
         await sem.acquire()
         sem.release()
-        item = await r.blpop([events.CLEANUP_KEY, events.QUEUE_KEY], timeout=5)
+        item = await r.blpop([events.CLEANUP_KEY, events.NOMINATE_KEY, events.LABPROFILE_KEY, events.QUEUE_KEY], timeout=5)
         if not item:
             continue
         key, value = item
@@ -101,6 +101,31 @@ async def main() -> None:
                 log.info("removed sandbox + workspace of deleted thread %s", value)
             except Exception:
                 log.exception("cleanup of %s failed", value)
+            continue
+        if key == events.NOMINATE_KEY:
+            # research project → lab KB nomination (LLM summary + embedding); runs here for Bedrock creds
+            async def nominate(payload: str):
+                import json as _json
+                async with sem:
+                    try:
+                        p = _json.loads(payload)
+                        await pipeline.nominate_experience(p["thread_id"], p["user_id"], p["lab_id"], p.get("lab_name", ""))
+                    except Exception:
+                        log.exception("nomination failed")
+            nt = asyncio.create_task(nominate(value))
+            running.add(nt)
+            nt.add_done_callback(running.discard)
+            continue
+        if key == events.LABPROFILE_KEY:
+            async def profile(lab_id: str):
+                async with sem:
+                    try:
+                        await labs.generate_profile_draft(lab_id)
+                    except Exception:
+                        log.exception("lab profile draft failed")
+            pt = asyncio.create_task(profile(value))
+            running.add(pt)
+            pt.add_done_callback(running.discard)
             continue
         run_id = value
         log.info("picked run %s", run_id)

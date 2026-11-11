@@ -1,7 +1,7 @@
 import { DragEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, Attachment, Block, eventsUrl, fmtDuration, fmtTime, fmtTokens, Item, modelName, parsePipe, Project, RunInfo, ToolBlock, Usage } from "./api";
+import { api, Attachment, Block, eventsUrl, fmtDuration, fmtTime, fmtTokens, Item, modelName, parsePipe, PlanStep, Project, RunInfo, ToolBlock, Usage } from "./api";
 import Panel, { PanelTab } from "./Panel";
-import { ApprovalBar, EvidenceCard, PipelineNote, StageTracker, stageLabels } from "./Pipeline";
+import { ApprovalBar, EvidenceCard, NominateCard, PipelineNote, StageTracker, stageLabels } from "./Pipeline";
 import { AssistantTurn, FileOpenCtx, Markdown } from "./Render";
 import { meta } from "./tools";
 
@@ -135,7 +135,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
       onActivity();
     } catch (e: any) { setError(e.message); } finally { setGateBusy(false); }
   }, [load, connect, onActivity]);
-  const approve = () => passGate(() => api.approve(threadId));
+  const approve = (planSteps?: PlanStep[]) => passGate(() => api.approve(threadId, planSteps));
   const reject = (fb: string) => passGate(() => api.reject(threadId, fb));
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -191,17 +191,21 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
         )}
         <header className="chat-head">
           <div className="chat-title" title={title}>{title || "對話"}</div>
-          {activeRun ? (
-            <div className="run-chip running">
-              <span className="spinner sm" /> 執行中 · 第 {live.iteration || 1} 輪 · {fmtDuration((now - live.startedAt) / 1000)}
-              {liveTokens > 0 && <span className="muted"> · {fmtTokens(liveTokens + (live.usage.output_tokens || 0))} tokens</span>}
-            </div>
-          ) : lastRun && lastRun.status === "failed" ? <div className="run-chip bad">上次執行失敗</div> : null}
           <span className="spacer" />
-          <div className="seg">
-            <button className={panelOpen && panelTab === "detail" ? "on" : ""} onClick={() => openPanel("detail")}>步驟</button>
-            <button className={panelOpen && panelTab === "files" ? "on" : ""} onClick={() => openPanel("files")}>檔案</button>
-            <button className={panelOpen && panelTab === "status" ? "on" : ""} onClick={() => openPanel("status")}>狀態</button>
+          <div className="head-chips">
+            <button
+              className={"head-chip" + (panelOpen && panelTab === "status" ? " on" : activeRun ? " running" : lastRun?.status === "failed" ? " bad" : "")}
+              onClick={() => openPanel("status")}
+              title="執行狀態、沙盒與 GPU、COMSOL、待辦">
+              {activeRun ? (
+                <><span className="spinner sm" /> 執行中 · 第 {live.iteration || 1} 輪 · {fmtDuration((now - live.startedAt) / 1000)}
+                  {liveTokens > 0 && <span className="muted"> · {fmtTokens(liveTokens + (live.usage.output_tokens || 0))} tokens</span>}</>
+              ) : lastRun?.status === "failed" ? "⚠ 上次執行失敗"
+                : lastRun?.status === "completed" ? "✓ 完成"
+                : "狀態"}
+            </button>
+            <button className={"head-chip" + (panelOpen && panelTab === "files" ? " on" : "")} onClick={() => openPanel("files")} title="工作區檔案瀏覽與下載">檔案</button>
+            <button className={"head-chip" + (panelOpen && panelTab === "detail" ? " on" : "")} onClick={() => openPanel("detail")} title="點對話中任一步驟可看完整輸入與輸出">步驟</button>
           </div>
         </header>
 
@@ -268,6 +272,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
 
         <div className="composer">
           {atGate && project && <ApprovalBar project={project} busy={gateBusy} onApprove={approve} onReject={reject} />}
+          {isProject && !activeRun && project?.status === "completed" && <NominateCard project={project} threadId={threadId} />}
           {error && <div className="error">{error}</div>}
           {uploads.length > 0 && (
             <div className="chips">

@@ -16,6 +16,8 @@ from .config import settings
 
 QUEUE_KEY = "pa:queue"
 CLEANUP_KEY = "pa:cleanup"  # thread ids whose sandbox + workspace should be removed
+NOMINATE_KEY = "pa:nominate"  # json payloads: research project → lab KB nomination (LLM runs in worker)
+LABPROFILE_KEY = "pa:labprofile"  # lab ids: generate a specialty-profile draft (LLM runs in worker)
 EVENT_TTL_SECONDS = 24 * 3600
 
 _redis: aioredis.Redis | None = None
@@ -45,6 +47,14 @@ async def publish(run_id: str, event: dict[str, Any]) -> None:
 
 async def enqueue_run(run_id: str) -> None:
     await get_redis().rpush(QUEUE_KEY, run_id)
+
+
+async def enqueue_nomination(payload: dict[str, Any]) -> None:
+    await get_redis().rpush(NOMINATE_KEY, json.dumps(payload, default=str))
+
+
+async def enqueue_lab_profile(lab_id: str) -> None:
+    await get_redis().rpush(LABPROFILE_KEY, lab_id)
 
 
 async def request_stop(run_id: str) -> None:

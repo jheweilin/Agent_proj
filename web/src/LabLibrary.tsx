@@ -10,12 +10,18 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
   const [sel, setSel] = useState<string | null>(null);
   const [lab, setLab] = useState<Lab | null>(null);     // selected lab detail (members, join_code)
   const [docs, setDocs] = useState<KbDoc[]>([]);
+  const [pending, setPending] = useState<KbDoc[]>([]);  // nominated experience notes awaiting owner review
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [newName, setNewName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [addEmail, setAddEmail] = useState("");
+  // L2 specialty profile editor (owner)
+  const [pSummary, setPSummary] = useState("");
+  const [pKeywords, setPKeywords] = useState("");
+  const [pPublic, setPPublic] = useState(false);
+  const [drafting, setDrafting] = useState(false);
 
   const loadLabs = useCallback(async () => {
     try {
@@ -34,6 +40,11 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
       setLab(d);
       setEnabled(k.enabled);
       setDocs(k.documents);
+      setPSummary(d.summary || "");
+      setPKeywords((d.keywords || []).join("、"));
+      setPPublic(!!d.is_public);
+      // only the owner can see / review the nomination queue
+      setPending(d.role === "owner" ? (await api.labKbPending(id)).documents : []);
     } catch (e: any) { setErr(e.message); }
   }, []);
   useEffect(() => { if (sel) loadDetail(sel); else { setLab(null); setDocs([]); } }, [sel, loadDetail]);
@@ -50,6 +61,9 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
   const delDoc = (d: KbDoc) =>
     sel && confirm(`從實驗室庫刪除「${d.source}」？`) &&
     guard(async () => { await api.labKbDelete(sel, d.id); await loadDetail(sel); });
+  const review = (d: KbDoc, action: "approve" | "reject") =>
+    sel && (action === "approve" || confirm(`退回並刪除「${d.source}」？`)) &&
+    guard(async () => { await api.labKbReview(sel, d.id, action); await loadDetail(sel); });
 
   const create = () => newName.trim() &&
     guard(async () => { const l = await api.createLab(newName.trim()); setNewName(""); await loadLabs(); setSel(l.id); });
@@ -65,7 +79,25 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
   const regen = () => sel && confirm("重置加入碼？舊的加入碼會立即失效。") &&
     guard(async () => { await api.regenLabCode(sel); await loadDetail(sel); });
 
+  const splitKw = (s: string) => s.split(/[、,，\s]+/).map((k) => k.trim()).filter(Boolean).slice(0, 8);
+  const saveProfile = () => sel &&
+    guard(async () => { await api.setLabProfile(sel, { summary: pSummary.trim(), keywords: splitKw(pKeywords), is_public: pPublic }); await loadDetail(sel); });
+  const genDraft = () => sel && guard(async () => {
+    setDrafting(true);
+    try {
+      await api.draftLabProfile(sel);
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const d = await api.lab(sel);
+        if (d.profile_status !== "generating") { setLab(d); break; }
+      }
+    } finally { setDrafting(false); }
+  });
+  const adoptDraft = (summary: string, keywords: string[]) => { setPSummary(summary); setPKeywords(keywords.join("、")); };
+
   const isOwner = lab?.role === "owner";
+  let draft: { summary: string; keywords: string[] } | null = null;
+  try { draft = lab?.profile_draft ? JSON.parse(lab.profile_draft) : null; } catch { draft = null; }
   const totalChunks = docs.reduce((a, d) => a + d.chunks, 0);
 
   return (
@@ -105,12 +137,62 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
                 <div key={d.id} className="kb-row">
                   <div className="kb-main">
                     <span className="kb-name" title={d.source}>{d.source}</span>
+                    {d.kind === "experience" && <span className="kb-badge">研究經驗</span>}
                     <span className="muted small">{d.chunks} 段</span>
                   </div>
                   <button className="icon" title="從實驗室庫刪除" onClick={() => delDoc(d)}>✕</button>
                 </div>
               ))}
             </div>
+
+            {isOwner && pending.length > 0 && (
+              <>
+                <div className="lab-sec-title">待審納入 <span className="muted small"> · {pending.length} 份研究經驗等你審核</span></div>
+                <div className="kb-list">
+                  {pending.map((d) => (
+                    <div key={d.id} className="kb-row pending">
+                      <div className="kb-main">
+                        <span className="kb-name" title={d.source}>{d.source}</span>
+                        {d.submitted_by_name && <span className="muted small">由 {d.submitted_by_name} 提名 · {d.chunks} 段</span>}
+                      </div>
+                      <button className="btn small" disabled={busy} onClick={() => review(d, "approve")}>納入</button>
+                      <button className="icon" title="退回並刪除" disabled={busy} onClick={() => review(d, "reject")}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {isOwner && (
+              <>
+                <div className="lab-sec-title">專長名片 <span className="muted small"> · 公開到跨實驗室名錄（只放方向與關鍵字，不含內容）</span></div>
+                <div className="lab-profile">
+                  <label className="prof-public">
+                    <input type="checkbox" checked={pPublic} disabled={busy} onChange={(e) => setPPublic(e.target.checked)} />
+                    <span>公開到名錄（讓別的實驗室搜尋得到）</span>
+                  </label>
+                  <textarea className="prof-summary" rows={3} value={pSummary} disabled={busy}
+                            placeholder="用 3～5 句話描述研究方向與專長…" onChange={(e) => setPSummary(e.target.value)} />
+                  <input className="search" value={pKeywords} disabled={busy}
+                         placeholder="關鍵字，用、或逗號分隔（最多 8 個）" onChange={(e) => setPKeywords(e.target.value)} />
+                  <div className="prof-actions">
+                    <button className="btn primary small" disabled={busy} onClick={saveProfile}>儲存名片</button>
+                    <button className="btn small" disabled={busy || drafting || !enabled}
+                            onClick={genDraft} title="讓 AI 讀實驗室庫草擬一版">
+                      {drafting ? "AI 草擬中…" : "AI 生成草稿"}
+                    </button>
+                  </div>
+                  {draft && (draft.summary || draft.keywords?.length) && (
+                    <div className="prof-draft">
+                      <div className="muted small">AI 草稿（可採用後再修改）：</div>
+                      {draft.summary && <div className="prof-draft-sum">{draft.summary}</div>}
+                      {draft.keywords?.length > 0 && <div className="dir-tags">{draft.keywords.map((k) => <span key={k} className="dir-tag">{k}</span>)}</div>}
+                      <button className="btn small" disabled={busy} onClick={() => adoptDraft(draft!.summary, draft!.keywords || [])}>採用草稿</button>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
 
             <div className="lab-sec-title">成員{lab.member_count != null && <span className="muted small"> · {lab.member_count} 人</span>}</div>
             {isOwner && (

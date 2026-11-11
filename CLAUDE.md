@@ -9,7 +9,7 @@
 ## 兩種模式
 
 - **一般對話（chat）**：單一 agent 迴圈（最早的 Phase A 行為），配領域 prompt 與工具。
-- **研究專案（project）**：`ar.jpg` 的**九階段 pipeline**，有兩個人工關卡。前端新對話時用頂部列的「一般對話／研究專案」切換。
+- **研究專案（project）**：`ar.jpg` 的**九階段 pipeline**，有兩個人工關卡。前端新建時按頂部列「＋ 新研究」開**置中 modal**（`NewThreadModal.tsx`）選模式／領域，並有「進階選項」可**為每個 agent（chat 助理＋六個 pipeline 角色）各指定 LLM**，另含 effort、max_iterations。設定存在 `threads.config`（JSONB），建立時決定、整條 pipeline 沿用。
 
 九階段：① 釐清 Clarifier → ② 檢索證據（程式）→ ③ 規劃 Planner →〔④ 你核准計畫〕→ ⑤ 研究 Researcher（沙盒）→ ⑥ 獨立驗證 Verifier → ⑦ 第二實作 Replicator（隔離複現）→ ⑧ 唯讀審查 Reviewer → ⑨ 等級與報告（程式）→〔你接受／拒絕〕。退回邊：④ 退回→重新釐清；⑥ 驗證沒過→自動退回 ⑤ 研究（上限 1 次）；⑨ 拒絕→重做研究。
 
@@ -26,7 +26,7 @@ docker compose 專案 `plasma-agent`（`deploy/docker-compose.yml`，密鑰在 `
 
 api 和 worker 共用 image `plasma-agent:latest`（`Dockerfile`：node 編譯 `web/` → python app）。**Dockerfile 有 `ARG PIP_INDEX_URL`**：這台連 pypi.org 很慢（約 8 秒/次），改 requirements 觸發全套件重裝時 build 會卡很久；必要時 `docker compose build --build-arg PIP_INDEX_URL=<mirror>`（使用者已授權，auto 模式會擋第三方 index 需同意）。requirements 不變時走快取、很快。
 
-- **LLM**：Amazon Bedrock，`anthropic.AsyncAnthropicBedrock(aws_region="ap-southeast-1")`，主模型 `global.anthropic.claude-sonnet-5-5`；拒答改 `global.anthropic.claude-opus-5-5`；標題／分類用 `global.anthropic.claude-haiku-5-5`。憑證來自 `~/.aws`（IAM `sciencepal`，與正式環境共用）。不要改用 `AnthropicBedrockMantle`（此 region 找不到模型）。Bedrock 沒有內建 web_search，搜尋是自己實作的工具。
+- **LLM**：Amazon Bedrock，`anthropic.AsyncAnthropicBedrock(aws_region="ap-southeast-1")`，主模型 `global.anthropic.claude-sonnet-5-5`；拒答改 `global.anthropic.claude-opus-5-5`；標題／分類用 `global.anthropic.claude-haiku-5-5`。憑證來自 `~/.aws`（IAM `sciencepal`，與正式環境共用）。不要改用 `AnthropicBedrockMantle`（此 region 找不到模型）。Bedrock 沒有內建 web_search，搜尋是自己實作的工具。**每個 thread 可在 `threads.config` 覆寫每個 agent 的 model 與 effort／max_iterations**：`agent.thread_runtime(thread, key)` 解析（key＝`"chat"` 或角色名），`Runner(model=,effort=,max_iters=)` 吃；`pipeline._run_role` 按角色各自解析。拒答備援仍用 `settings.fallback_model`（per-run）。白名單＝`config.AVAILABLE_MODELS`／`VALID_MODEL_IDS`，`api._sanitize_config` 過濾、`GET /api/models` 給前端。
 - **知識庫 embedding／rerank**：**Voyage AI**（`voyage-3.5` embedding 1024 維、`rerank-2.5`），key 在 `deploy/.env` 的 `VOYAGE_API_KEY`。這是新增的對外依賴（voyageai.com）。
 - **沙盒**：worker 透過 Docker API 為每個對話建一個 `public.ecr.aws/z1o8z4f9/agent:plasma-1.1.0` 容器（名 `pa-sbx-<id12>`，CDI 只給 `nvidia.com/gpu=0`，16g 記憶體、12 CPU）。`/workspace` 掛 `/data/plasma-agent/workspaces/<thread_id>`，閒置 120 分鐘自動停。映像有 PlasmaPy 2025.10、SMILEI、happi、Gmsh、Hermes-3（BOUT++5 只有函式庫）、PyTorch CUDA、Playwright。**目前所有領域共用這個映像**（通用輕量映像尚未做）。
 - **COMSOL 範例庫**：主機 `/data/jhewlin/comsol64_applications`（6.4 Application Library，44 模組、2,094 `.mph`，`COMSOL_LIBRARY_DIR`）唯讀掛到每個沙盒 `/comsol_examples`。`sandbox._ensure_sync` 遇到沒這個掛載的舊沙盒會砍掉重建（`/workspace` 保留，有背景 job 時不動）。用法在 `docs/comsol_examples/library/`。
@@ -36,7 +36,7 @@ api 和 worker 共用 image `plasma-agent:latest`（`Dockerfile`：node 編譯 `
 
 ```
 backend/plasma_agent/
-  config.py        環境變數設定（含 voyage_*、default_domain、max_context_chars）
+  config.py        環境變數設定（含 voyage_*、default_domain、max_context_chars、admin/faculty emails）＋AVAILABLE_MODELS 白名單
   db.py            資料表：users、threads(含 domain/mode)、messages(原樣保存 content blocks，只附加)、
                    runs(含 stage)、projects(九階段研究卡：stage/status/card)、kb_datasets/kb_documents/kb_chunks(pgvector)
   events.py        Redis 佇列與事件
@@ -58,7 +58,7 @@ prompts/           plasma_system.md、general_system.md（領域 prompt；角色
 docs/              RESEARCH_AGENT_PLAN.md、PLASMA_AGENT_PLAN.md、AGENT_GUIDE.md、comsol_examples/、guide_tools/
 web/src/           App(頂部導覽＋對話抽屜)、Chat(對話＋階段渲染)、Render(時間軸/襯線報告)、tools.tsx、
                    Panel(步驟/檔案/狀態＋知識庫卡)、Pipeline.tsx(九階段 tracker＋核准卡＋等級卡)、
-                   KbLibrary.tsx(基礎庫 modal)、brand.ts(APP_NAME)、Code、Login、api.ts、index.css
+                   KbLibrary.tsx(基礎庫 modal)、LabLibrary.tsx(實驗室庫 modal)、NewThreadModal.tsx(新建 modal＋進階 per-agent model)、brand.ts(APP_NAME)、Code、Login、api.ts、index.css
 deploy/e2e.py      端到端測試腳本；deploy/shot.py UI 截圖
 test_project/      使用者提供的 GEC CCP 範例檔（不進 git）
 ```

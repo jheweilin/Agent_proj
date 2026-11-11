@@ -18,7 +18,7 @@ import uuid
 from sqlalchemy import select
 
 from . import agent, events, kb, roles, sandbox, tools
-from .db import Message, Project, Run, SessionLocal
+from .db import Message, Project, Run, SessionLocal, Thread
 
 log = logging.getLogger("plasma_agent.pipeline")
 
@@ -77,7 +77,9 @@ async def _run_role(outer, role, stage: str, init_messages=None) -> None:
     (used by the Replicator so it can't see the research results — true independence).
     """
     await outer.publish({"type": "stage_start", "stage": stage, "role": role.name, "label": role.label})
-    r = agent.Runner(outer.run, outer.thread, outer.user, outer.domain, role=role, init_messages=init_messages)
+    model, effort, max_iters = agent.thread_runtime(outer.thread, role.name)
+    r = agent.Runner(outer.run, outer.thread, outer.user, outer.domain, role=role, init_messages=init_messages,
+                     model=model, effort=effort, max_iters=max_iters)
     await r.loop()
     for k in outer.usage:
         outer.usage[k] += r.usage.get(k, 0)
@@ -268,8 +270,14 @@ async def advance(run: Run, thread, user, domain, outer) -> str:
             stage = "plan"
             await _set(thread.id, stage, "running", outer)
         elif stage == "plan":
+            try:   # drop any stale checklist from a previous planning pass
+                (sandbox.workspace_dir(str(thread.id)) / ".pipeline" / "plan.json").unlink()
+            except FileNotFoundError:
+                pass
             await _run_role(outer, roles.PLANNER, stage)
-            await _set_card(thread.id, plan=await _latest_assistant_text(thread.id))  # capture plan for the Replicator
+            steps = (_read_json(thread.id, "plan.json") or {}).get("steps") or []
+            # capture plan text (for the Replicator) + structured steps (for the approval checklist)
+            await _set_card(thread.id, plan=await _latest_assistant_text(thread.id), plan_steps=steps)
             stage = "approve_plan"
             await _set(thread.id, stage, "awaiting_plan_approval", outer)
             await outer.publish({"type": "awaiting_approval", "gate": "plan"})
@@ -315,20 +323,43 @@ async def _append_user(thread_id: uuid.UUID, run_id: uuid.UUID, text: str) -> No
     await agent._save_message(thread_id, run_id, "user", [{"type": "text", "text": text}])
 
 
-async def approve(thread) -> dict:
-    """Advance through the current human gate. Plan gate → research; acceptance gate → completed."""
+def _approved_plan_note(steps) -> str:
+    """Build the approved-plan user message. If the user kept/edited a step checklist, inject the
+    final enabled steps so the Researcher follows exactly what was confirmed; else a generic note."""
+    enabled = [st for st in (steps or []) if st.get("enabled", True) and (st.get("title") or "").strip()]
+    if not enabled:
+        return _note("approved_plan") + "\n（使用者已核准計畫，請嚴格依計畫開始執行研究。）"
+    lines = [_note("approved_plan"),
+             "（使用者已核准計畫，並確認下列執行步驟。請**嚴格依這些步驟**執行研究，不要自行增刪或改順序；"
+             "先完成前一步並確認無誤再進行下一步。計畫其餘的方法與參數仍以上文為準。）", "",
+             "已核准的執行步驟："]
+    for i, st in enumerate(enabled, 1):
+        line = f"{i}. {(st.get('title') or '').strip()}"
+        if (st.get("detail") or "").strip():
+            line += f" — {st['detail'].strip()}"
+        if (st.get("source") or "").strip():
+            line += f"（來源：{st['source'].strip()}）"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+async def approve(thread, plan_steps=None) -> dict:
+    """Advance through the current human gate. Plan gate → research; acceptance gate → completed.
+
+    `plan_steps` is the user's edited/checked checklist from the approval UI (None = not edited,
+    fall back to the steps the Planner recorded)."""
     async with SessionLocal() as s:
         p = (await s.execute(select(Project).where(Project.thread_id == thread.id))).scalar_one_or_none()
         if p is None:
             return {"ok": False, "detail": "這個對話不是研究專案"}
         if p.status == "awaiting_plan_approval":
+            steps = plan_steps if plan_steps is not None else (p.card or {}).get("plan_steps") or []
             run = Run(thread_id=thread.id, status="queued", model="", stage="research")
             s.add(run)
             await s.flush()
-            await _append_user(thread.id, run.id,
-                               _note("approved_plan") + "\n（使用者已核准計畫，請嚴格依計畫開始執行研究。）")
+            await _append_user(thread.id, run.id, _approved_plan_note(steps))
             p.stage, p.status = "research", "running"
-            p.card = {**(p.card or {}), "verify_retries": 0}   # fresh research cycle
+            p.card = {**(p.card or {}), "verify_retries": 0, "plan_steps": steps}   # fresh research cycle
             await s.commit()
             await events.enqueue_run(str(run.id))
             return {"ok": True, "stage": "research", "status": "running", "run_id": str(run.id)}
@@ -370,8 +401,104 @@ async def reject(thread, feedback: str) -> dict:
         return {"ok": False, "detail": "目前沒有待退回的關卡"}
 
 
+# ---------------------------------------------------------------- knowledge flywheel: nominate research → lab KB
+
+async def _first_user_text(thread_id: uuid.UUID) -> str:
+    async with SessionLocal() as s:
+        rows = (await s.execute(select(Message).where(Message.thread_id == thread_id)
+                                .order_by(Message.id))).scalars().all()
+    for m in rows:
+        if m.role == "user":
+            txt = " ".join(b.get("text", "") for b in m.content
+                           if b.get("type") == "text" and not b.get("text", "").startswith("[[pa:")).strip()
+            if txt:
+                return txt
+    return ""
+
+
+async def build_experience_doc(thread, card: dict) -> tuple[str, str]:
+    """Distil a finished project into a structured '存法二' experience note (method + pitfalls +
+    negative results + back-link), the unit that gets nominated into a lab KB. Returns (title, markdown)."""
+    idea = await _first_user_text(thread.id)
+    report = await _latest_assistant_text(thread.id)
+    plan = (card.get("plan") or "").strip()
+    grade = card.get("grade") or {}
+    verification = card.get("verification") or {}
+    review = card.get("review") or {}
+    retries = int(card.get("verify_retries", 0))
+    # the valuable tacit knowledge: what failed / had to be redone
+    failed = [c for c in (verification.get("checks") or []) if not c.get("passed")]
+    pitfalls = []
+    if retries:
+        pitfalls.append(f"驗證未過、研究退回重做 {retries} 次")
+    pitfalls += [f"驗證項「{c.get('name')}」未過：{c.get('detail')}" for c in failed]
+    pitfalls += [f"審查疑慮：{c}" for c in (review.get("concerns") or [])]
+    ctx = {
+        "原始問題／想法": idea[:2000],
+        "研究計畫": plan[:4000],
+        "最終報告": report[:6000],
+        "等級": grade,
+        "驗證摘要": verification.get("summary", ""),
+        "踩坑與負面結果（請務必寫進文件）": pitfalls,
+    }
+    prompt = (
+        "你要把一個已完成的研究專案，整理成一篇**給實驗室新成員看的經驗筆記**，之後會存進實驗室知識庫、"
+        "讓學弟妹用聊天就能問到『學長當初怎麼做、在哪踩雷、怎麼解決的』。請用繁體中文、Markdown，"
+        "**務必保留方法與踩坑／負面結果**（這才是最有價值的部分，不要只寫漂亮的成功結論）。\n\n"
+        "固定結構：\n"
+        "# <研究題目>\n"
+        "- **研究問題**：\n"
+        "- **方法與設定**：用了哪些工具／關鍵參數／邊界條件\n"
+        "- **過程與踩坑**：中間哪裡卡住、為何退回重做、最後怎麼解的（保留負面結果）\n"
+        "- **關鍵結果**：\n"
+        "- **結論**：\n"
+        "- **限制與後續**：\n\n"
+        "只輸出這篇筆記本身，第一行用 `# ` 開頭當標題。以下是這個專案的素材（JSON）：\n\n"
+        + json.dumps(ctx, ensure_ascii=False, indent=1))
+    model, _, _ = agent.thread_runtime(thread, "chat")
+    resp = await agent.client().messages.create(
+        model=model, max_tokens=4000, output_config={"effort": "low"},
+        messages=[{"role": "user", "content": prompt}])
+    md = "".join(b.text for b in resp.content if b.type == "text").strip()
+    title = idea[:40] or "研究經驗"
+    for line in md.splitlines():
+        if line.startswith("# "):
+            title = line[2:].strip()[:80] or title
+            break
+    back = f"\n\n---\n*來源：本平台研究專案（thread `{thread.id}`）。想看完整過程可回原專案查閱。*"
+    return title, (md + back if md else f"# {title}{back}")
+
+
+async def mark_nomination(thread_id, lab_id, lab_name: str, status: str, **extra) -> None:
+    """Record nomination state on project.card so the UI reflects it immediately (api sets
+    'generating' before enqueueing; the worker updates to 'pending'/'error')."""
+    await _set_card(thread_id, nomination={"lab_id": str(lab_id), "lab_name": lab_name, "status": status, **extra})
+
+
+async def nominate_experience(thread_id, user_id, lab_id, lab_name: str = "") -> None:
+    """Generate the experience note and ingest it into the lab KB as pending (awaiting owner review).
+    Heavy (LLM + embedding) and needs Bedrock creds — runs in the worker (see events.NOMINATE_KEY)."""
+    try:
+        async with SessionLocal() as s:
+            thread = await s.get(Thread, uuid.UUID(str(thread_id)))
+        if thread is None:
+            return
+        card = await _get_card(thread.id)
+        title, body = await build_experience_doc(thread, card)
+        dsid = await kb.lab_dataset_id(lab_id, name=lab_name)
+        source = f"研究經驗：{title}"
+        res = await kb.ingest(dsid, source, body, origin="research", kind="experience", status="pending",
+                              source_thread_id=thread.id, submitted_by=uuid.UUID(str(user_id)))
+        await mark_nomination(thread.id, lab_id, lab_name, "pending", source=source, doc_id=res.get("id"))
+    except Exception as e:
+        log.exception("nominate_experience failed: %s", e)
+        await mark_nomination(thread_id, lab_id, lab_name, "error", detail=str(e)[:300])
+
+
 def project_out(p: Project | None) -> dict | None:
     if p is None:
         return None
     return {"stage": p.stage, "status": p.status, "grade": (p.card or {}).get("grade"),
+            "plan_steps": (p.card or {}).get("plan_steps") or [],
+            "nomination": (p.card or {}).get("nomination"),
             "stages": [{"name": n, "label": l} for n, l in STAGE_LABELS]}

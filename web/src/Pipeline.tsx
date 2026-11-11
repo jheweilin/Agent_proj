@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Item, parsePipe, Project } from "./api";
+import { useEffect, useState } from "react";
+import { api, Item, Lab, parsePipe, PlanStep, Project } from "./api";
 import { Markdown } from "./Render";
 
 // stages actually implemented in the current phase; the rest show as "之後" (Phase D)
@@ -82,14 +82,27 @@ export function StageTracker({ project, live, onJump }: { project: Project; live
   );
 }
 
+type EditStep = { title: string; detail: string; source: string; enabled: boolean };
+
 export function ApprovalBar({ project, busy, onApprove, onReject }: {
-  project: Project; busy: boolean; onApprove: () => void; onReject: (fb: string) => void;
+  project: Project; busy: boolean; onApprove: (planSteps?: PlanStep[]) => void; onReject: (fb: string) => void;
 }) {
   const [rejecting, setRejecting] = useState(false);
   const [fb, setFb] = useState("");
+  const [steps, setSteps] = useState<EditStep[]>([]);
   const plan = project.status === "awaiting_plan_approval";
   const accept = project.status === "awaiting_acceptance";
+  const incoming = project.plan_steps;
+  // sync the editable checklist when the planner's recorded steps arrive / change
+  useEffect(() => {
+    setSteps((incoming || []).map((s) => ({
+      title: s.title || "", detail: s.detail || "", source: s.source || "", enabled: s.enabled !== false,
+    })));
+  }, [JSON.stringify(incoming || [])]);
   if (!plan && !accept) return null;
+  const hasTodo = plan && steps.length > 0;
+  const patch = (i: number, p: Partial<EditStep>) => setSteps((s) => s.map((x, j) => (j === i ? { ...x, ...p } : x)));
+  const anyOn = steps.some((s) => s.enabled);
   return (
     <div className="approve">
       <div className="approve-head">
@@ -97,7 +110,8 @@ export function ApprovalBar({ project, busy, onApprove, onReject }: {
         <div>
           <strong>{plan ? "計畫待核准" : "結果待驗收"}</strong>
           <div className="muted small">
-            {plan ? "看過上方的規劃後核准即可開始研究；或退回並說明要修改的地方。"
+            {plan ? (hasTodo ? "勾選要執行的步驟、可直接改文字，再核准開始研究；或退回重新規劃。"
+                             : "看過上方的規劃後核准即可開始研究；或退回並說明要修改的地方。")
                   : "程式已依獨立驗證結果評級。確認無誤即可完成；或退回並說明要修正的地方。"}
           </div>
         </div>
@@ -109,9 +123,28 @@ export function ApprovalBar({ project, busy, onApprove, onReject }: {
           {project.grade.summary && <span className="grade-sum">{project.grade.summary}</span>}
         </div>
       )}
+      {hasTodo && !rejecting && (
+        <div className="plan-todo">
+          {steps.map((st, i) => (
+            <div className={`plan-step${st.enabled ? "" : " off"}`} key={i}>
+              <input type="checkbox" checked={st.enabled} disabled={busy}
+                     onChange={(e) => patch(i, { enabled: e.target.checked })} />
+              <div className="plan-step-main">
+                <input className="plan-step-title" value={st.title} disabled={busy || !st.enabled}
+                       onChange={(e) => patch(i, { title: e.target.value })} />
+                <input className="plan-step-detail" value={st.detail} disabled={busy || !st.enabled}
+                       placeholder="做法與要檢查什麼（可留空）"
+                       onChange={(e) => patch(i, { detail: e.target.value })} />
+                {st.source && <span className="plan-step-src">來源：{st.source}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {!rejecting ? (
         <div className="approve-actions">
-          <button className="btn primary" disabled={busy} onClick={onApprove}>
+          <button className="btn primary" disabled={busy || (hasTodo && !anyOn)}
+                  onClick={() => onApprove(hasTodo ? steps : undefined)}>
             {plan ? "核准並開始研究" : "接受並完成"}
           </button>
           <button className="btn ghost" disabled={busy} onClick={() => setRejecting(true)}>退回修改</button>
@@ -127,6 +160,66 @@ export function ApprovalBar({ project, busy, onApprove, onReject }: {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Shown on a COMPLETED project: nominate this research as an experience note into a lab KB (閘門①).
+// Any member may nominate; a lab owner approves it in the 實驗室庫 before it becomes retrievable.
+export function NominateCard({ project, threadId }: { project: Project; threadId: string }) {
+  const [labs, setLabs] = useState<Lab[]>([]);
+  const [sel, setSel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+  const nom = project.nomination;
+  useEffect(() => {
+    if (nom) return;  // already nominated — no need to load labs
+    api.labs().then((r) => { setLabs(r.labs); setSel(r.labs[0]?.id || ""); }).catch(() => {});
+  }, [nom]);
+  if (project.status !== "completed") return null;
+
+  if (nom || done) {
+    const name = nom?.lab_name || labs.find((l) => l.id === done)?.name || "";
+    const status = nom?.status || "pending";
+    return (
+      <div className="nominate done">
+        {status === "error"
+          ? <span className="muted small">提名失敗：{nom?.detail || "請稍後再試"}</span>
+          : status === "generating"
+          ? <span className="muted small">正在整理研究經驗筆記並提名至<strong>{name}</strong>…</span>
+          : <span className="muted small">✓ 已提名納入<strong>{name}</strong>
+              {status === "pending" ? "，待負責人審核後納入實驗室庫。" : "。"}</span>}
+      </div>
+    );
+  }
+  const go = () => {
+    if (!sel) return;
+    setBusy(true); setErr("");
+    api.nominate(threadId, sel).then((r) => setDone(r.lab_id))
+      .catch((e) => setErr(e.message)).finally(() => setBusy(false));
+  };
+  return (
+    <div className="nominate">
+      <div className="nominate-head">
+        <strong>把這次研究納入實驗室知識庫？</strong>
+        <div className="muted small">會整理成一篇「研究經驗」筆記（方法＋踩坑），送交實驗室負責人審核；通過後，同實驗室的新成員聊天就查得到。</div>
+      </div>
+      {labs.length === 0 ? (
+        <span className="muted small">你還沒有加入任何實驗室——加入後即可提名。</span>
+      ) : (
+        <div className="nominate-actions">
+          {labs.length > 1 && (
+            <select value={sel} onChange={(e) => setSel(e.target.value)} disabled={busy}>
+              {labs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          )}
+          <button className="btn primary small" disabled={busy || !sel} onClick={go}>
+            {busy ? "提名中…" : labs.length > 1 ? "提名到所選實驗室" : `提名到「${labs[0].name}」`}
+          </button>
+        </div>
+      )}
+      {err && <div className="error small">{err}</div>}
     </div>
   );
 }

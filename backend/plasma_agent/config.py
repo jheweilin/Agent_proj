@@ -84,3 +84,25 @@ class Settings:
 
 
 settings = Settings()
+
+
+# models a user may assign to an agent in the "new thread" advanced options (see api /api/models).
+# These are the current-generation ACTIVE Bedrock inference profiles in our region (ap-southeast-1),
+# ordered by tier/recency. Verify ids with `aws bedrock list-inference-profiles` before adding.
+AVAILABLE_MODELS: list[dict] = [
+    {"id": "global.anthropic.claude-opus-5-5", "label": "Claude Opus 5.5"},
+    {"id": "global.anthropic.claude-opus-5", "label": "Claude Opus 5"},
+    {"id": "global.anthropic.claude-opus-4-8", "label": "Claude Opus 4.8"},
+    {"id": "global.anthropic.claude-opus-4-7", "label": "Claude Opus 4.7"},
+    {"id": "global.anthropic.claude-sonnet-5-5", "label": "Claude Sonnet 5.5"},
+    {"id": "global.anthropic.claude-sonnet-5", "label": "Claude Sonnet 5"},
+    {"id": "global.anthropic.claude-sonnet-4-6", "label": "Claude Sonnet 4.6"},
+    {"id": "global.anthropic.claude-haiku-5-5", "label": "Claude Haiku 5.5"},
+    {"id": "global.anthropic.claude-haiku-4-5-20251001-v1:0", "label": "Claude Haiku 4.5"},
+    {"id": "global.anthropic.claude-fable-5", "label": "Claude Fable 5"},
+]
+# any configured model is also valid, so the current defaults never get rejected by validation
+VALID_MODEL_IDS: set[str] = {m["id"] for m in AVAILABLE_MODELS} | {
+    settings.model, settings.fallback_model, settings.title_model}
+VALID_EFFORTS: set[str] = {"low", "medium", "high"}
+MAX_ITERATIONS_LIMIT = 300

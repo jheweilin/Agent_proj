@@ -1,11 +1,24 @@
 export type User = { id: string; email: string; name: string; is_admin: boolean; is_faculty: boolean };
 export type DomainChoice = { name: string; label: string };
+export type ModelChoice = { id: string; label: string };
+export type AgentSlot = { key: string; label: string; modes: string[] };
+export type ModelsInfo = {
+  models: ModelChoice[]; default_model: string; agents: AgentSlot[];
+  defaults: { effort: string; max_iterations: number };
+};
+export type ThreadConfig = { models?: Record<string, string>; effort?: string; max_iterations?: number };
 export type LabMember = { user_id: string; name: string; email: string; role: string };
 export type Lab = {
   id: string; name: string; role: string; owner_id: string; created_at: string;
   join_code?: string; member_count?: number; members?: LabMember[];
+  // L2 specialty profile (公開名片)
+  summary?: string; keywords?: string[]; is_public?: boolean;
+  profile_draft?: string; profile_status?: string;  // owner only
 };
-export type Thread = { id: string; title: string; domain: string; mode: string; created_at: string; updated_at: string; active_run_id: string | null };
+export type DirectoryLab = {
+  id: string; name: string; summary: string; keywords: string[]; member_count: number; is_member: boolean;
+};
+export type Thread = { id: string; title: string; domain: string; mode: string; config?: ThreadConfig; created_at: string; updated_at: string; active_run_id: string | null };
 
 export type ToolResult = {
   is_error: boolean; preview: string; output?: string; images?: string[]; ui?: any; seconds?: number;
@@ -45,11 +58,21 @@ export type ThreadStatus = {
   kb?: { docs: number; chunks: number } | null;
 };
 export type FileEntry = { name: string; path: string; dir: boolean; size: number; mtime: number };
-export type KbDoc = { id: string; source: string; chunks: number; created_at: string };
+export type KbDoc = {
+  id: string; source: string; chunks: number; created_at: string;
+  // knowledge-flywheel metadata (lab KB); defaults upload/reference/approved for plain uploads
+  origin?: string; kind?: string; status?: string;
+  source_thread_id?: string | null; submitted_by?: string | null; submitted_by_name?: string;
+};
 
 export type ProjectStage = { name: string; label: string };
 export type Grade = { level: string; passed: number; total: number; summary: string };
-export type Project = { stage: string; status: string; stages: ProjectStage[]; grade?: Grade | null };
+export type PlanStep = { title: string; detail: string; source: string; enabled?: boolean };
+export type Nomination = { lab_id: string; lab_name: string; status: string; source?: string; doc_id?: string; detail?: string };
+export type Project = {
+  stage: string; status: string; stages: ProjectStage[];
+  grade?: Grade | null; plan_steps?: PlanStep[]; nomination?: Nomination | null;
+};
 
 // injected pipeline messages carry a machine marker so the UI renders them as stage cards / notes
 export type PipeParsed =
@@ -98,9 +121,11 @@ export const api = {
   login: (email: string, password: string) => req<{ token: string; user: User }>("POST", "/api/auth/login", { email, password }),
   me: () => req<User>("GET", "/api/me"),
   domains: () => req<DomainChoice[]>("GET", "/api/domains"),
+  models: () => req<ModelsInfo>("GET", "/api/models"),
   threads: () => req<Thread[]>("GET", "/api/threads"),
-  createThread: (domain?: string, mode?: string) =>
-    req<Thread>("POST", "/api/threads", { ...(domain ? { domain } : {}), ...(mode ? { mode } : {}) }),
+  createThread: (domain?: string, mode?: string, config?: ThreadConfig) =>
+    req<Thread>("POST", "/api/threads",
+      { ...(domain ? { domain } : {}), ...(mode ? { mode } : {}), ...(config ? { config } : {}) }),
   thread: (id: string) => req<Thread>("GET", `/api/threads/${id}`),
   renameThread: (id: string, title: string) => req<Thread>("PATCH", `/api/threads/${id}`, { title }),
   deleteThread: (id: string) => req<{ ok: boolean }>("DELETE", `/api/threads/${id}`),
@@ -108,7 +133,9 @@ export const api = {
   send: (id: string, text: string, uploads: string[]) =>
     req<{ run_id: string }>("POST", `/api/threads/${id}/messages`, { text, uploads }),
   stop: (runId: string) => req<{ ok: boolean }>("POST", `/api/runs/${runId}/stop`),
-  approve: (id: string) => req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/approve`),
+  approve: (id: string, planSteps?: PlanStep[]) =>
+    req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/approve`,
+      planSteps ? { plan_steps: planSteps } : undefined),
   reject: (id: string, feedback: string) =>
     req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/reject`, { feedback }),
   toolDetail: (id: string, toolId: string) => req<ToolDetail>("GET", `/api/threads/${id}/tools/${toolId}`),
@@ -143,6 +170,17 @@ export const api = {
     return req<{ ingested: { source: string; chunks: number }[] }>("POST", `/api/labs/${id}/kb/upload`, fd, true);
   },
   labKbDelete: (id: string, docId: string) => req<{ ok: boolean }>("DELETE", `/api/labs/${id}/kb/documents/${docId}`),
+  // knowledge flywheel: nominate a finished project → lab KB (pending); owner reviews the queue
+  nominate: (threadId: string, labId: string) =>
+    req<{ ok: boolean; status: string; lab_id: string; lab_name: string }>("POST", `/api/threads/${threadId}/nominate`, { lab_id: labId }),
+  labKbPending: (id: string) => req<{ enabled: boolean; documents: KbDoc[] }>("GET", `/api/labs/${id}/kb/pending`),
+  labKbReview: (id: string, docId: string, action: "approve" | "reject") =>
+    req<{ ok: boolean }>("POST", `/api/labs/${id}/kb/pending/${docId}/${action}`),
+  // L2 專長名錄
+  labDirectory: () => req<{ labs: DirectoryLab[] }>("GET", "/api/labs/directory"),
+  setLabProfile: (id: string, body: { summary: string; keywords: string[]; is_public: boolean }) =>
+    req<Lab>("PUT", `/api/labs/${id}/profile`, body),
+  draftLabProfile: (id: string) => req<{ ok: boolean; status: string }>("POST", `/api/labs/${id}/profile/draft`),
 };
 
 export function fileUrl(threadId: string, path: string, download = false) {
@@ -188,10 +226,12 @@ export function fmtTime(iso: string) {
 
 export function modelName(m: string) {
   const x = m.toLowerCase();
-  if (x.includes("sonnet-5-5")) return "Claude Sonnet 5.5";
-  if (x.includes("opus-5-5")) return "Claude Opus 5.5";
-  if (x.includes("haiku-5-5")) return "Claude Haiku 5.5";
-  return m;
+  const tier = x.includes("opus") ? "Opus" : x.includes("sonnet") ? "Sonnet"
+    : x.includes("haiku") ? "Haiku" : x.includes("fable") ? "Fable" : "";
+  if (!tier) return m;
+  const mm = x.match(/(?:opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?/);
+  const ver = mm ? (mm[2] ? `${mm[1]}.${mm[2]}` : mm[1]) : "";
+  return `Claude ${tier}${ver ? " " + ver : ""}`;
 }
 
 export function zipUrl(threadId: string, paths: string[], name = "results") {

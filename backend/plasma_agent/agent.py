@@ -154,8 +154,24 @@ class StopRequested(Exception):
     pass
 
 
+def thread_runtime(thread: Thread, key: str) -> tuple[str, str, int]:
+    """Resolve (model, effort, max_iters) for one agent of a thread from its per-thread config.
+
+    `key` is "chat" (plain chat) or a pipeline role name. Any missing/invalid value falls back to
+    the settings default. effort/max_iterations are thread-global (shared by all stages)."""
+    cfg = getattr(thread, "config", None) or {}
+    model = (cfg.get("models") or {}).get(key) or settings.model
+    effort = cfg.get("effort") or settings.effort
+    try:
+        max_iters = int(cfg.get("max_iterations") or settings.max_iterations)
+    except (TypeError, ValueError):
+        max_iters = settings.max_iterations
+    return model, effort, max_iters
+
+
 class Runner:
-    def __init__(self, run: Run, thread: Thread, user: User, domain: domains.Domain, role=None, init_messages=None):
+    def __init__(self, run: Run, thread: Thread, user: User, domain: domains.Domain, role=None, init_messages=None,
+                 model=None, effort=None, max_iters=None):
         self.run = run
         self.thread = thread
         self.user = user
@@ -165,7 +181,9 @@ class Runner:
         self.init_messages = init_messages
         self.run_id = str(run.id)
         self.thread_id = str(thread.id)
-        self.model = settings.model
+        self.model = model or settings.model          # per-agent model override (new-thread advanced options)
+        self.effort = effort or settings.effort
+        self.max_iters = max_iters or settings.max_iterations
         # tools this run exposes: the domain's set, further restricted by the role (None = all)
         all_names = set(tools.REGISTRY)
         dom = domain.allowed_tools(all_names)              # None (all registered) or a set
@@ -207,7 +225,7 @@ class Runner:
             system=system_prompt(self.domain, self.role),
             messages=messages,
             thinking=thinking,
-            output_config={"effort": settings.effort},
+            output_config={"effort": self.effort},
             cache_control={"type": "ephemeral"},
         )
         if tool_defs:  # Clarifier/Planner run with no tools; omit the key rather than sending []
@@ -273,9 +291,9 @@ class Runner:
     async def loop(self) -> str:
         messages = list(self.init_messages) if self.init_messages is not None else await _load_history(self.thread.id)
         truncations = 0
-        for i in range(settings.max_iterations):
+        for i in range(self.max_iters):
             await self.check_stop()
-            await self.publish({"type": "iteration", "n": i + 1, "max": settings.max_iterations,
+            await self.publish({"type": "iteration", "n": i + 1, "max": self.max_iters,
                                 "usage": self.usage, "model": self.model})
             msg = await self._call_model(messages)
             content = _dump_blocks(msg.content)
@@ -317,7 +335,7 @@ class Runner:
             messages.append({"role": "user", "content": results})
             await _save_message(self.thread.id, self.run.id, "user", results)
 
-        await self.publish({"type": "status", "text": f"已達單次執行上限 {settings.max_iterations} 輪，暫停。輸入「繼續」可接著做。"})
+        await self.publish({"type": "status", "text": f"已達單次執行上限 {self.max_iters} 輪，暫停。輸入「繼續」可接著做。"})
         return "completed"
 
     async def _run_tools(self, tool_uses) -> list[dict]:
@@ -377,17 +395,19 @@ async def execute_run(run_id: str) -> None:
         user = await s.get(User, thread.user_id) if thread else None
         if thread is None or user is None:
             return
+        domain = domains.get(getattr(thread, "domain", None))
+        chat_model, chat_effort, chat_iters = thread_runtime(thread, "chat")
         run.status = "running"
         run.started_at = utcnow()
-        run.model = settings.model
-        domain = domains.get(getattr(thread, "domain", None))
+        run.model = chat_model
         await s.commit()
 
     r = events.get_redis()
     busy_key = f"pa:thread:{thread.id}:busy"
     await r.set(busy_key, run_id, ex=6 * 3600)
-    runner = Runner(run, thread, user, domain)
-    await runner.publish({"type": "run_start", "run_id": run_id, "model": settings.model,
+    # project mode drives per-role runners inside pipeline; this outer runner handles chat + shared ctx
+    runner = Runner(run, thread, user, domain, model=chat_model, effort=chat_effort, max_iters=chat_iters)
+    await runner.publish({"type": "run_start", "run_id": run_id, "model": chat_model,
                           "started_at": utcnow().isoformat()})
 
     title_task = None

@@ -43,6 +43,9 @@ class Thread(Base):
     domain: Mapped[str] = mapped_column(String(40), default="plasma", server_default="plasma")
     # "chat" = plain single-agent chat (Phase A), "project" = nine-stage research pipeline (Phase B)
     mode: Mapped[str] = mapped_column(String(20), default="chat", server_default="chat")
+    # per-thread runtime config set at creation: {"models": {agent_key: model_id}, "effort", "max_iterations"}.
+    # Missing keys fall back to settings defaults. See agent.thread_runtime.
+    config: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -99,13 +102,22 @@ class Run(Base):
 
 
 class Lab(Base):
-    """A research lab (實驗室). Owned by a faculty member; its KB is shared among members only."""
+    """A research lab (實驗室). Owned by a faculty member; its KB is shared among members only.
+
+    Profile fields (L2 專長名錄, docs/LAB_KNOWLEDGE_PLAN.md): a public specialty card for the
+    cross-lab directory. `summary`/`keywords` are owner-curated (LLM may draft into `profile_draft`);
+    only shown in the directory when `is_public` is set."""
     __tablename__ = "labs"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(300), default="")
     owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True),
                                                 ForeignKey("users.id", ondelete="CASCADE"), index=True)
     join_code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    keywords: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    profile_draft: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")  # LLM draft, owner reviews
+    profile_status: Mapped[str] = mapped_column(String(20), nullable=False, default="", server_default="")  # ''|generating|ready|error
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -146,6 +158,17 @@ class KbDocument(Base):
     source: Mapped[str] = mapped_column(String(600), default="")   # filename / path / url
     file_hash: Mapped[str] = mapped_column(String(64), default="")
     n_chunks: Mapped[int] = mapped_column(Integer, default=0)
+    # knowledge-flywheel metadata (docs/LAB_KNOWLEDGE_PLAN.md):
+    #   origin: upload (manual) | research (platform research project) | chat
+    #   kind:   reference (papers/IP) | experience (how-to + pitfalls, generated)
+    #   status: approved (visible to retrieval) | pending (nominated, awaiting owner) | rejected
+    # Defaults keep every pre-existing / manually-uploaded doc approved+reference+upload.
+    origin: Mapped[str] = mapped_column(String(20), nullable=False, default="upload", server_default="upload")
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="reference", server_default="reference")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="approved", server_default="approved")
+    source_thread_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)  # back-link to origin project
+    submitted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)       # nominator
+    tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")    # topic tags (L3 grants)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -187,6 +210,27 @@ async def init_db() -> None:
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_faculty BOOLEAN NOT NULL DEFAULT false")
         await conn.exec_driver_sql(
             "ALTER TABLE kb_datasets ADD COLUMN IF NOT EXISTS lab_id UUID")
+        await conn.exec_driver_sql(
+            "ALTER TABLE threads ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}'::jsonb")
+        # knowledge-flywheel columns on kb_documents (existing rows → upload/reference/approved)
+        await conn.exec_driver_sql(
+            "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS origin VARCHAR(20) NOT NULL DEFAULT 'upload'")
+        await conn.exec_driver_sql(
+            "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'reference'")
+        await conn.exec_driver_sql(
+            "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'approved'")
+        await conn.exec_driver_sql(
+            "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS source_thread_id UUID")
+        await conn.exec_driver_sql(
+            "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS submitted_by UUID")
+        await conn.exec_driver_sql(
+            "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb")
+        # lab profile columns (L2 專長名錄)
+        await conn.exec_driver_sql("ALTER TABLE labs ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT ''")
+        await conn.exec_driver_sql("ALTER TABLE labs ADD COLUMN IF NOT EXISTS keywords JSONB NOT NULL DEFAULT '[]'::jsonb")
+        await conn.exec_driver_sql("ALTER TABLE labs ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT false")
+        await conn.exec_driver_sql("ALTER TABLE labs ADD COLUMN IF NOT EXISTS profile_draft TEXT NOT NULL DEFAULT ''")
+        await conn.exec_driver_sql("ALTER TABLE labs ADD COLUMN IF NOT EXISTS profile_status VARCHAR(20) NOT NULL DEFAULT ''")
 
 
 async def get_session():
