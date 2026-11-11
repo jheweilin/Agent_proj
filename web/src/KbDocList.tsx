@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, fmtSize, KbDoc, kbDocFileUrl } from "./api";
+import { Markdown } from "./Render";
 
 // Shared file-manager list for the base + lab knowledge libraries. Shows each document's type,
 // size, date, chunk count and tags; lets you preview the retained original (inline PDF/image/text),
@@ -13,9 +14,9 @@ function icon(doc: KbDoc): string {
   return "📎";
 }
 
-export default function KbDocList({ docs, canManage, enabled, onDelete, onChanged }: {
+export default function KbDocList({ docs, canManage, enabled, onDelete, onChanged, query }: {
   docs: KbDoc[]; canManage: boolean; enabled: boolean;
-  onDelete: (doc: KbDoc) => void; onChanged: () => void;
+  onDelete: (doc: KbDoc) => void; onChanged: () => void; query?: string;
 }) {
   const [preview, setPreview] = useState<string | null>(null);   // docId whose original is previewed
   const [textFor, setTextFor] = useState<string | null>(null);   // docId whose extracted text is shown
@@ -45,10 +46,16 @@ export default function KbDocList({ docs, canManage, enabled, onDelete, onChange
 
   if (docs.length === 0) return <div className="muted small pad">{enabled ? "還沒有文件。" : "知識庫未啟用。"}</div>;
 
+  const needle = (query || "").trim().toLowerCase();
+  const shown = needle
+    ? docs.filter((d) => [d.title, d.source, ...(d.tags || [])].some((x) => (x || "").toLowerCase().includes(needle)))
+    : docs;
+
   return (
     <div className="kbfiles">
       {err && <div className="error small">{err}</div>}
-      {docs.map((d) => {
+      {shown.length === 0 && <div className="muted small pad">沒有符合「{query}」的文件。</div>}
+      {shown.map((d) => {
         const isPdf = (d.mime === "application/pdf") || (d.source || "").toLowerCase().endsWith(".pdf");
         const isImg = (d.mime || "").startsWith("image/");
         return (
@@ -70,7 +77,13 @@ export default function KbDocList({ docs, canManage, enabled, onDelete, onChange
               <div className="kbfile-actions">
                 {d.has_file && <button className="btn ghost small" onClick={() => togglePreview(d)}>預覽</button>}
                 {d.has_file && <a className="btn ghost small" href={kbDocFileUrl(d.id, true)} target="_blank" rel="noreferrer">下載</a>}
-                <button className="btn ghost small" onClick={() => showText(d)}>文字</button>
+                {d.kind === "experience" ? (<>
+                  {d.source_thread_id && <a className="btn ghost small" href={`${location.origin}${location.pathname}#/v/${d.source_thread_id}`}
+                     target="_blank" rel="noreferrer" title="唯讀看這篇筆記的原始研究對話（含步驟與圖）；若原對話已刪除，請看「摘要」">看完整對話</a>}
+                  <button className="btn ghost small" onClick={() => showText(d)} title="這篇研究經驗筆記（實驗室實際留存、可被檢索的知識）">摘要</button>
+                </>) : (
+                  <button className="btn ghost small" onClick={() => showText(d)}>文字</button>
+                )}
                 {canManage && <button className="btn ghost small" disabled={busy} onClick={() => startEdit(d)}>編輯</button>}
                 {canManage && <label className={`btn ghost small${busy ? " disabled" : ""}`}>替換
                   <input type="file" hidden disabled={busy} onChange={(e) => { replace(d, e.target.files?.[0] || null); e.target.value = ""; }} /></label>}
@@ -94,7 +107,9 @@ export default function KbDocList({ docs, canManage, enabled, onDelete, onChange
               isImg ? <img className="kbfile-preview-img" src={kbDocFileUrl(d.id)} alt={d.source} />
                     : <iframe className="kbfile-preview" src={kbDocFileUrl(d.id)} title={d.source} />
             )}
-            {textFor === d.id && <pre className="kbfile-text">{text || "（沒有抽取到文字）"}</pre>}
+            {textFor === d.id && (d.kind === "experience"
+              ? <div className="pending-view">{text ? <Markdown text={text} threadId="" /> : <span className="muted small">（沒有內容）</span>}</div>
+              : <pre className="kbfile-text">{text || "（沒有抽取到文字）"}</pre>)}
           </div>
         );
       })}

@@ -23,7 +23,7 @@ from .agent import user_message_content
 from .auth import (current_user, hash_password, identity_flags, is_faculty_email, make_token,
                    require_admin, verify_password)
 from .config import (AVAILABLE_MODELS, MAX_ITERATIONS_LIMIT, VALID_EFFORTS, VALID_MODEL_IDS, settings)
-from .db import (KbDataset, KbGrant, Lab, LabMember, Message, Run, Thread, User, func,
+from .db import (KbDataset, KbDocument, KbGrant, Lab, LabMember, Message, Run, Thread, User, func,
                  get_session, init_db, utcnow)
 from .tools.base import text_of
 
@@ -107,6 +107,37 @@ async def _own_thread(thread_id: str, user: User, s: AsyncSession) -> Thread:
     return t
 
 
+async def _view_thread(thread_id: str, user: User, s: AsyncSession) -> Thread:
+    """Read-only access to a conversation. Allowed for: the owner; any logged-in user if the
+    thread is shared; a lab owner reviewing a nomination sourced from this thread (閘門①); and,
+    once that nomination is approved (now lab knowledge), any member of that lab. 404 otherwise."""
+    try:
+        tid = uuid.UUID(thread_id)
+    except ValueError:
+        raise HTTPException(404, "找不到對話")
+    t = await s.get(Thread, tid)
+    if t is None:
+        raise HTTPException(404, "找不到對話")
+    if t.user_id == user.id or getattr(t, "shared", False):
+        return t
+    # lab access via a nomination sourced from this thread: the owner may always view (for review);
+    # other members may view only once the note is approved (it has become shared lab knowledge).
+    rows = (await s.execute(
+        select(KbDocument.status, Lab.owner_id, KbDataset.lab_id)
+        .join(KbDataset, KbDataset.id == KbDocument.dataset_id)
+        .join(Lab, Lab.id == KbDataset.lab_id)
+        .where(KbDocument.source_thread_id == tid, KbDataset.category == "lab"))).all()
+    for status, owner_id, lab_id in rows:
+        if owner_id == user.id:
+            return t
+        if status == "approved":
+            m = (await s.execute(select(LabMember.id).where(
+                LabMember.lab_id == lab_id, LabMember.user_id == user.id).limit(1))).first()
+            if m:
+                return t
+    raise HTTPException(404, "找不到對話")
+
+
 async def _active_run(thread_id: uuid.UUID, s: AsyncSession) -> Run | None:
     return (await s.execute(select(Run).where(Run.thread_id == thread_id, Run.status.in_(ACTIVE))
                             .order_by(desc(Run.created_at)).limit(1))).scalar_one_or_none()
@@ -117,6 +148,7 @@ def _thread_out(t: Thread, active: Run | None = None) -> dict:
             "mode": getattr(t, "mode", "chat"), "config": getattr(t, "config", None) or {},
             "suggest_project": getattr(t, "suggest_project", None),
             "promote_dismissed": getattr(t, "promote_dismissed", False),
+            "shared": getattr(t, "shared", False),
             "created_at": t.created_at.isoformat(),
             "updated_at": t.updated_at.isoformat(), "active_run_id": str(active.id) if active else None}
 
@@ -205,8 +237,25 @@ async def delete_thread(thread_id: str, user: User = Depends(current_user), s: A
 
 @app.get("/api/threads/{thread_id}")
 async def get_thread(thread_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    t = await _view_thread(thread_id, user, s)
+    out = _thread_out(t, await _active_run(t.id, s))
+    out["is_owner"] = t.user_id == user.id
+    return out
+
+
+class ShareIn(BaseModel):
+    shared: bool
+
+
+@app.post("/api/threads/{thread_id}/share")
+async def set_share(thread_id: str, body: ShareIn, user: User = Depends(current_user),
+                    s: AsyncSession = Depends(get_session)):
+    """Toggle a read-only share link for this conversation (owner only). When on, any logged-in
+    user with the link can view it read-only; see _view_thread."""
     t = await _own_thread(thread_id, user, s)
-    return _thread_out(t, await _active_run(t.id, s))
+    t.shared = body.shared
+    await s.commit()
+    return {"ok": True, "shared": t.shared}
 
 
 # ------------------------------------------------------------------ messages (display form)
@@ -287,7 +336,7 @@ def _display(rows: list[Message]) -> list[dict]:
 
 @app.get("/api/threads/{thread_id}/messages")
 async def get_messages(thread_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
-    t = await _own_thread(thread_id, user, s)
+    t = await _view_thread(thread_id, user, s)
     rows = (await s.execute(select(Message).where(Message.thread_id == t.id).order_by(Message.id))).scalars().all()
     runs = (await s.execute(select(Run).where(Run.thread_id == t.id).order_by(Run.created_at))).scalars().all()
     project = pipeline.project_out(await pipeline.gate_status(t.id)) if getattr(t, "mode", "chat") == "project" else None
@@ -305,7 +354,7 @@ def _run_out(r: Run) -> dict:
 async def tool_detail(thread_id: str, tool_use_id: str, user: User = Depends(current_user),
                       s: AsyncSession = Depends(get_session)):
     """Full input and output of one tool call (the chat view only carries previews)."""
-    t = await _own_thread(thread_id, user, s)
+    t = await _view_thread(thread_id, user, s)
     rows = (await s.execute(select(Message).where(Message.thread_id == t.id).order_by(Message.id))).scalars().all()
     call, result = None, None
     for m in rows:
@@ -572,7 +621,7 @@ async def run_events(run_id: str, request: Request, user: User = Depends(current
 @app.get("/api/threads/{thread_id}/files")
 async def list_files(thread_id: str, path: str = "/workspace", user: User = Depends(current_user),
                      s: AsyncSession = Depends(get_session)):
-    t = await _own_thread(thread_id, user, s)
+    t = await _view_thread(thread_id, user, s)
     tid = str(t.id)
     try:
         base = sandbox.resolve_path(tid, path)
@@ -593,7 +642,7 @@ async def list_files(thread_id: str, path: str = "/workspace", user: User = Depe
 @app.get("/api/threads/{thread_id}/file")
 async def get_file(thread_id: str, path: str, download: int = 0, user: User = Depends(current_user),
                    s: AsyncSession = Depends(get_session)):
-    t = await _own_thread(thread_id, user, s)
+    t = await _view_thread(thread_id, user, s)
     try:
         p = sandbox.resolve_path(str(t.id), path)
     except sandbox.PathError as e:
@@ -612,7 +661,7 @@ async def download_zip(thread_id: str, path: list[str] = Query(default=[]), name
     """Download several workspace files as one zip (the 'download all' button on a result card)."""
     import io
     import zipfile
-    t = await _own_thread(thread_id, user, s)
+    t = await _view_thread(thread_id, user, s)
     files = []
     for raw in path[:200]:
         try:

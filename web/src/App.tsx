@@ -7,6 +7,7 @@ import LabLibrary from "./LabLibrary";
 import LabDirectory from "./LabDirectory";
 import Login from "./Login";
 import NewThreadModal from "./NewThreadModal";
+import SharedView from "./SharedView";
 
 type Theme = "auto" | "light" | "dark";
 
@@ -39,6 +40,7 @@ export default function App() {
   const [checking, setChecking] = useState(true);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [current, setCurrent] = useState<string | null>(() => location.hash.match(/^#\/t\/([0-9a-f-]{36})$/)?.[1] ?? null);
+  const [sharedId, setSharedId] = useState<string | null>(() => location.hash.match(/^#\/v\/([0-9a-f-]{36})$/)?.[1] ?? null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<string | null>(null);
@@ -80,8 +82,16 @@ export default function App() {
   }, [user, refreshThreads]);
 
   useEffect(() => {
+    if (sharedId) return;  // a shared-view route owns the hash; don't overwrite it
     history.replaceState(null, "", current ? `#/t/${current}` : "#/");
-  }, [current]);
+  }, [current, sharedId]);
+
+  // react to hash navigation (e.g. opening a shared link, or browser back)
+  useEffect(() => {
+    const onHash = () => setSharedId(location.hash.match(/^#\/v\/([0-9a-f-]{36})$/)?.[1] ?? null);
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -90,6 +100,7 @@ export default function App() {
 
   if (checking) return <div className="center muted">載入中…</div>;
   if (!user) return <Login onLogin={(u) => setUser(u)} />;
+  if (sharedId) return <SharedView threadId={sharedId} onExit={() => { setSharedId(null); setCurrent(null); location.hash = "#/"; }} />;
 
   const createThread = async (opts: { domain: string; mode: string; config?: ThreadConfig }, prompt?: string) => {
     const t = await api.createThread(opts.domain, opts.mode, opts.config);

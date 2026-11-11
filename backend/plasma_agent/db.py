@@ -50,6 +50,8 @@ class Thread(Base):
     # promoting (UI offers a one-click 轉成研究專案). Re-checked every turn until true or dismissed.
     suggest_project: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     promote_dismissed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # true once the owner shares a read-only link; any logged-in user with the link may then view it
+    shared: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -250,6 +252,8 @@ async def init_db() -> None:
             "ALTER TABLE threads ADD COLUMN IF NOT EXISTS suggest_project BOOLEAN")
         await conn.exec_driver_sql(
             "ALTER TABLE threads ADD COLUMN IF NOT EXISTS promote_dismissed BOOLEAN NOT NULL DEFAULT false")
+        await conn.exec_driver_sql(
+            "ALTER TABLE threads ADD COLUMN IF NOT EXISTS shared BOOLEAN NOT NULL DEFAULT false")
         # knowledge-flywheel columns on kb_documents (existing rows → upload/reference/approved)
         await conn.exec_driver_sql(
             "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS origin VARCHAR(20) NOT NULL DEFAULT 'upload'")

@@ -193,12 +193,16 @@ export function NominateCard({ project, threadId }: { project: Project; threadId
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const [err, setErr] = useState("");
+  const dismissKey = `pa:nominate-dismissed:${threadId}`;
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem(dismissKey) === "1");
   const nom = project.nomination;
   useEffect(() => {
-    if (nom) return;  // already nominated — no need to load labs
+    if (nom || dismissed) return;  // already nominated or dismissed — no need to load labs
     api.labs().then((r) => { setLabs(r.labs); setSel(r.labs[0]?.id || ""); }).catch(() => {});
-  }, [nom]);
+  }, [nom, dismissed]);
   if (project.status !== "completed") return null;
+  // user chose to skip; keep it hidden (已提名的卡片仍會顯示狀態，不受此影響)
+  if (dismissed && !nom && !done) return null;
 
   if (nom || done) {
     const name = nom?.lab_name || labs.find((l) => l.id === done)?.name || "";
@@ -220,8 +224,10 @@ export function NominateCard({ project, threadId }: { project: Project; threadId
     api.nominate(threadId, sel).then((r) => setDone(r.lab_id))
       .catch((e) => setErr(e.message)).finally(() => setBusy(false));
   };
+  const skip = () => { localStorage.setItem(dismissKey, "1"); setDismissed(true); };
   return (
     <div className="nominate">
+      <button className="nominate-close" onClick={skip} title="略過，不提名" aria-label="略過">×</button>
       <div className="nominate-head">
         <strong>把這次研究納入實驗室知識庫？</strong>
         <div className="muted small">會整理成一篇「研究經驗」筆記（方法＋踩坑），送交實驗室負責人審核；通過後，同實驗室的新成員聊天就查得到。</div>
@@ -238,6 +244,7 @@ export function NominateCard({ project, threadId }: { project: Project; threadId
           <button className="btn primary small" disabled={busy || !sel} onClick={go}>
             {busy ? "提名中…" : labs.length > 1 ? "提名到所選實驗室" : `提名到「${labs[0].name}」`}
           </button>
+          <button className="btn small" disabled={busy} onClick={skip}>略過</button>
         </div>
       )}
       {err && <div className="error small">{err}</div>}

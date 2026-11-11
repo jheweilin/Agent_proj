@@ -27,6 +27,8 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   const [activeRun, setActiveRun] = useState<string | null>(null);
   const [live, setLive] = useState<Live>(emptyLive());
   const [mode, setMode] = useState<string>("chat");
+  const [shared, setShared] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
   const [suggestProject, setSuggestProject] = useState<boolean | null>(null);
   const [dismissPromote, setDismissPromote] = useState(false);
@@ -57,6 +59,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
     setRuns(m.runs);
     setTitle(t.title);
     setMode(t.mode);
+    setShared(!!t.shared);
     setProject(m.project);
     setSuggestProject(t.suggest_project ?? null);
     setDismissPromote(!!t.promote_dismissed);
@@ -165,6 +168,10 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   const onDragLeave = (e: DragEvent) => { if (!hasFiles(e)) return; if (--dragDepth.current <= 0) { dragDepth.current = 0; setDragging(false); } };
   const onDrop = (e: DragEvent) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth.current = 0; setDragging(false); pickFiles(e.dataTransfer.files); };
 
+  const shareUrl = `${location.origin}${location.pathname}#/v/${threadId}`;
+  const toggleShare = async (next: boolean) => {
+    try { const r = await api.shareThread(threadId, next); setShared(r.shared); } catch (e: any) { setError(e.message); }
+  };
   const openStep = (b: ToolBlock) => { setSelected(b); setPanelTab("detail"); setPanelOpen(true); };
   const openFile = (p: string) => { setFilePath(p); setPanelTab("files"); setPanelOpen(true); };
   const openKbDoc = (d: KbDocRef) => { setKbDoc(d); setPanelTab("kbdoc"); setPanelOpen(true); };
@@ -205,6 +212,27 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
           {!isProject && !activeRun && items.length > 0 && (
             <button className="btn ghost small head-promote" disabled={gateBusy} onClick={promote}
                     title="把這個對話接上九階段研究流程（釐清→規劃→研究→驗證→審查，關鍵處你把關）">轉成研究專案</button>
+          )}
+          {items.length > 0 && (
+            <div className="share-wrap">
+              <button className={"btn ghost small" + (shared ? " on" : "")} onClick={() => setShareOpen((v) => !v)}
+                      title="產生唯讀分享連結（只有登入本平台的人看得到）">{shared ? "🔗 已分享" : "分享"}</button>
+              {shareOpen && (
+                <div className="share-pop" onMouseLeave={() => setShareOpen(false)}>
+                  <label className="share-toggle">
+                    <input type="checkbox" checked={shared} onChange={(e) => toggleShare(e.target.checked)} />
+                    <span>開啟唯讀分享</span>
+                  </label>
+                  <div className="muted small">任何登入本平台的人，拿到連結就能唯讀看這個對話（含步驟與產生的檔案），但不能修改。</div>
+                  {shared && (
+                    <div className="share-link">
+                      <input readOnly value={shareUrl} onFocus={(e) => e.target.select()} />
+                      <button className="btn small" onClick={() => navigator.clipboard?.writeText(shareUrl).catch(() => {})}>複製</button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
           <div className="head-chips">
             <button

@@ -24,7 +24,7 @@ export type Grant = {
   id: string; status: string; scope: string; scope_ref: string[]; note: string;
   grantor_lab_id: string; grantee_lab_id: string; grantor_name: string; grantee_name: string; created_at: string;
 };
-export type Thread = { id: string; title: string; domain: string; mode: string; config?: ThreadConfig; suggest_project?: boolean | null; promote_dismissed?: boolean; created_at: string; updated_at: string; active_run_id: string | null };
+export type Thread = { id: string; title: string; domain: string; mode: string; config?: ThreadConfig; suggest_project?: boolean | null; promote_dismissed?: boolean; shared?: boolean; is_owner?: boolean; created_at: string; updated_at: string; active_run_id: string | null };
 
 export type ToolResult = {
   is_error: boolean; preview: string; output?: string; images?: string[]; ui?: any; seconds?: number;
@@ -152,6 +152,8 @@ export const api = {
   reject: (id: string, feedback: string) =>
     req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/reject`, { feedback }),
   toolDetail: (id: string, toolId: string) => req<ToolDetail>("GET", `/api/threads/${id}/tools/${toolId}`),
+  shareThread: (id: string, shared: boolean) =>
+    req<{ ok: boolean; shared: boolean }>("POST", `/api/threads/${id}/share`, { shared }),
   status: (id: string) => req<ThreadStatus>("GET", `/api/threads/${id}/status`),
   files: (id: string, path: string) =>
     req<{ path: string; entries: FileEntry[] }>("GET", `/api/threads/${id}/files?path=${encodeURIComponent(path)}`),

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { DragEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, Grant, KbDoc, Lab, User } from "./api";
 import KbDocList from "./KbDocList";
 
@@ -30,6 +30,7 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
   const [aDocs, setADocs] = useState<Set<string>>(new Set());
   const [aTags, setATags] = useState("");
   const [section, setSection] = useState("files");   // which left-rail section is shown
+  const [secQ, setSecQ] = useState("");              // per-section search box (members/pending/grants)
 
   const loadLabs = useCallback(async () => {
     try {
@@ -71,6 +72,17 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
   const upload = (files: FileList | null) => {
     if (!files || !files.length || !sel) return;
     guard(async () => { await api.labKbUpload(sel, Array.from(files)); await loadDetail(sel); });
+  };
+  // drag & drop upload onto the files section (same as the chat composer)
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
+  const onDragEnter = (e: DragEvent) => { e.preventDefault(); if (!enabled || busy) return; dragDepth.current++; setDragging(true); };
+  const onDragOver = (e: DragEvent) => { e.preventDefault(); };
+  const onDragLeave = (e: DragEvent) => { e.preventDefault(); if (--dragDepth.current <= 0) { dragDepth.current = 0; setDragging(false); } };
+  const onDrop = (e: DragEvent) => {
+    e.preventDefault(); dragDepth.current = 0; setDragging(false);
+    if (!enabled || busy) return;
+    upload(e.dataTransfer.files);
   };
   const delDoc = (d: KbDoc) =>
     sel && confirm(`從實驗室庫刪除「${d.source}」？`) &&
@@ -131,9 +143,12 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
 
   const pendingN = pending.length;
   const requestsN = grants.incoming.filter((g) => g.status === "requested").length;
-  const railBtn = (key: string, label: string, badge?: number) => (
-    <button className={`lablib-tab${section === key ? " on" : ""}`} onClick={() => setSection(key)}>
-      {label}{badge ? <span className="lablib-badge">{badge}</span> : null}
+  // count = neutral tally (文件/成員); alert = action-needed pill (待審/跨域)
+  const railBtn = (key: string, label: string, opts?: { count?: number; alert?: number }) => (
+    <button className={`lablib-tab${section === key ? " on" : ""}`} onClick={() => { setSection(key); setSecQ(""); }}>
+      <span className="lablib-tab-label">{label}</span>
+      {opts?.count != null && <span className="lablib-count">{opts.count}</span>}
+      {opts?.alert ? <span className="lablib-badge">{opts.alert}</span> : null}
     </button>
   );
 
@@ -155,31 +170,36 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
         <div className="lablib-body">
           <nav className="lablib-rail">
             {lab && <>
-              {railBtn("files", `文件 ${docs.length}`)}
-              {railBtn("members", `成員 ${lab.member_count ?? ""}`)}
-              {isOwner && railBtn("pending", "待審納入", pendingN)}
-              {isOwner && railBtn("grants", "跨域授權", requestsN)}
+              {railBtn("files", "文件", { count: docs.length })}
+              {railBtn("members", "成員", { count: lab.member_count ?? undefined })}
+              {isOwner && railBtn("pending", "待審納入", { alert: pendingN })}
+              {isOwner && railBtn("grants", "跨域授權", { alert: requestsN })}
               {isOwner && railBtn("profile", "專長名片")}
             </>}
             <div className="lablib-rail-sep" />
-            {railBtn("manage", "＋ 建立／加入")}
+            {railBtn("manage", canCreate ? "＋ 建立／加入" : "＋ 加入實驗室")}
           </nav>
 
           <div className="lablib-content">
-            {section === "files" && lab && (<>
-              {!enabled && <div className="error small">知識庫未啟用（部署時需設定 VOYAGE_API_KEY）。</div>}
-              <p className="muted small">實驗室的文件<strong>只有成員的研究專案查得到</strong>。上傳論文 PDF 或資料；檢索證據與 kb_search 會一起查。</p>
-              <div className="kb-bar">
-                <label className={`btn primary small${busy || !enabled ? " disabled" : ""}`}>
-                  {busy ? "處理中…" : "＋ 上傳到實驗室庫"}
-                  <input type="file" multiple hidden disabled={busy || !enabled}
-                         onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
-                </label>
-                {docs.length > 0 && <span className="muted small">{docs.length} 份文件 · {totalChunks} 段</span>}
+            {section === "files" && lab && (
+              <div className={`kb-drop${dragging ? " over" : ""}`}
+                   onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+                {dragging && <div className="kb-drop-hint">⬆ 放開即可上傳到實驗室庫</div>}
+                {!enabled && <div className="error small">知識庫未啟用（部署時需設定 VOYAGE_API_KEY）。</div>}
+                <p className="muted small">實驗室的文件<strong>只有成員的研究專案查得到</strong>。上傳論文 PDF 或資料（可多檔、可直接拖曳到這裡）；檢索證據與 kb_search 會一起查。</p>
+                <div className="kb-bar">
+                  <label className={`btn primary small${busy || !enabled ? " disabled" : ""}`}>
+                    {busy ? "處理中…" : "＋ 上傳到實驗室庫"}
+                    <input type="file" multiple hidden disabled={busy || !enabled}
+                           onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
+                  </label>
+                  {docs.length > 0 && <span className="muted small">{docs.length} 份文件 · {totalChunks} 段</span>}
+                  {docs.length > 1 && <input className="search kb-search" placeholder="搜尋文件…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />}
+                </div>
+                <KbDocList docs={docs} canManage={enabled} enabled={enabled} onDelete={delDoc}
+                           query={secQ} onChanged={() => sel && loadDetail(sel)} />
               </div>
-              <KbDocList docs={docs} canManage={enabled} enabled={enabled} onDelete={delDoc}
-                         onChanged={() => sel && loadDetail(sel)} />
-            </>)}
+            )}
 
             {section === "members" && lab && (<>
               <div className="lab-sec-title">成員{lab.member_count != null && <span className="muted small"> · {lab.member_count} 人</span>}</div>
@@ -192,8 +212,13 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
                   <button className="btn small" disabled={busy} onClick={regen}>重置</button>
                 </div>
               )}
+              {(lab.members?.length ?? 0) > 1 && (
+                <input className="search sec-search" placeholder="搜尋成員（姓名、Email）…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />
+              )}
               <div className="kb-list">
-                {lab.members?.map((m) => (
+                {(lab.members || [])
+                  .filter((m) => !secQ.trim() || [m.name, m.email].some((x) => (x || "").toLowerCase().includes(secQ.trim().toLowerCase())))
+                  .map((m) => (
                   <div key={m.user_id} className="kb-row">
                     <div className="kb-main">
                       <span className="kb-name">{m.name || m.email}</span>
@@ -218,14 +243,23 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
             {section === "pending" && isOwner && (<>
               <div className="lab-sec-title">待審納入 <span className="muted small"> · 成員提名、你核准後才進庫並可被檢索</span></div>
               {pendingN === 0 && <div className="muted small pad">目前沒有待審的研究經驗。</div>}
+              {pendingN > 1 && (
+                <input className="search sec-search" placeholder="搜尋待審（標題、提名人）…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />
+              )}
               <div className="kb-list">
-                {pending.map((d) => (
+                {pending
+                  .filter((d) => !secQ.trim() || [d.source, d.submitted_by_name].some((x) => (x || "").toLowerCase().includes(secQ.trim().toLowerCase())))
+                  .map((d) => (
                   <div key={d.id} className="kb-row pending">
                     <div className="kb-main">
                       <span className="kb-name" title={d.source}>{d.source}</span>
                       {d.submitted_by_name && <span className="muted small">由 {d.submitted_by_name} 提名 · {d.chunks} 段</span>}
                     </div>
-                    <button className="btn small" disabled={busy} onClick={() => review(d, "approve")}>納入</button>
+                    {d.source_thread_id && (
+                      <a className="btn ghost small" href={`${location.origin}${location.pathname}#/v/${d.source_thread_id}`}
+                         target="_blank" rel="noreferrer" title="唯讀看學生當初的完整研究對話（含步驟與圖）">看完整對話</a>
+                    )}
+                    <button className="btn primary small" disabled={busy} onClick={() => review(d, "approve")}>納入</button>
                     <button className="icon" title="退回並刪除" disabled={busy} onClick={() => review(d, "reject")}>✕</button>
                   </div>
                 ))}
@@ -236,8 +270,13 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
               <div className="lab-sec-title">跨實驗室授權 <span className="muted small"> · 別的實驗室申請存取、以及你送出的申請</span></div>
               {grants.incoming.length === 0 && grants.outgoing.length === 0 &&
                 <div className="muted small pad">還沒有任何跨實驗室授權往來。到「名錄」可申請存取別的實驗室。</div>}
+              {grants.incoming.length + grants.outgoing.length > 1 && (
+                <input className="search sec-search" placeholder="搜尋授權（實驗室名稱、說明）…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />
+              )}
               <div className="kb-list">
-                {grants.incoming.map((g) => (
+                {grants.incoming
+                  .filter((g) => !secQ.trim() || [g.grantee_name, g.note].some((x) => (x || "").toLowerCase().includes(secQ.trim().toLowerCase())))
+                  .map((g) => (
                   <div key={g.id} className="kb-doc">
                     <div className="kb-row">
                       <div className="kb-main">
@@ -285,7 +324,9 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
                     )}
                   </div>
                 ))}
-                {grants.outgoing.map((g) => (
+                {grants.outgoing
+                  .filter((g) => !secQ.trim() || (g.grantor_name || "").toLowerCase().includes(secQ.trim().toLowerCase()))
+                  .map((g) => (
                   <div key={g.id} className="kb-row">
                     <div className="kb-main">
                       <span className="kb-name">已向 {g.grantor_name} 申請</span>
@@ -326,7 +367,7 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
             </>)}
 
             {section === "manage" && (<>
-              <div className="lab-sec-title">建立／加入實驗室</div>
+              <div className="lab-sec-title">{canCreate ? "建立／加入實驗室" : "加入實驗室"}</div>
               {labs.length === 0 && <p className="muted small">你還沒有加入任何實驗室。{canCreate ? "建立一個，或" : "請"}用加入碼加入。</p>}
               {canCreate && (
                 <div className="lab-form">

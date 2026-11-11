@@ -9,6 +9,7 @@ export default function KbLibrary({ onClose }: { onClose: () => void }) {
   const [canManage, setCanManage] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [docQ, setDocQ] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -52,9 +53,10 @@ export default function KbLibrary({ onClose }: { onClose: () => void }) {
             </label>
           )}
           {docs.length > 0 && <span className="muted small">{docs.length} 份文件 · {totalChunks} 段</span>}
+          {docs.length > 1 && <input className="search kb-search" placeholder="搜尋文件…" value={docQ} onChange={(e) => setDocQ(e.target.value)} />}
         </div>
         {err && <div className="error small">{err}</div>}
-        <KbDocList docs={docs} canManage={canManage} enabled={enabled} onDelete={del} onChanged={load} />
+        <KbDocList docs={docs} canManage={canManage} enabled={enabled} onDelete={del} query={docQ} onChanged={load} />
       </div>
     </div>
   );

@@ -9,10 +9,10 @@ import { meta, ToolFull, toolSummary } from "./tools";
 
 export type PanelTab = "detail" | "files" | "status" | "kbdoc";
 
-export default function Panel({ threadId, tab, setTab, selected, filePath, setFilePath, kbDoc, tick, liveRunning, onClose }: {
+export default function Panel({ threadId, tab, setTab, selected, filePath, setFilePath, kbDoc, tick, liveRunning, onClose, readOnly }: {
   threadId: string; tab: PanelTab; setTab: (t: PanelTab) => void; selected: ToolBlock | null;
   filePath: string | null; setFilePath: (p: string | null) => void; kbDoc: KbDocRef | null;
-  tick: number; liveRunning: boolean; onClose: () => void;
+  tick: number; liveRunning: boolean; onClose: () => void; readOnly?: boolean;
 }) {
   return (
     <aside className="panel">
@@ -20,7 +20,7 @@ export default function Panel({ threadId, tab, setTab, selected, filePath, setFi
         {kbDoc && <button className={tab === "kbdoc" ? "on" : ""} onClick={() => setTab("kbdoc")}>論文</button>}
         <button className={tab === "detail" ? "on" : ""} onClick={() => setTab("detail")}>步驟詳情</button>
         <button className={tab === "files" ? "on" : ""} onClick={() => setTab("files")}>檔案</button>
-        <button className={tab === "status" ? "on" : ""} onClick={() => setTab("status")}>狀態</button>
+        {!readOnly && <button className={tab === "status" ? "on" : ""} onClick={() => setTab("status")}>狀態</button>}
         <span className="spacer" />
         <button className="icon" onClick={onClose} aria-label="關閉面板">✕</button>
       </div>
