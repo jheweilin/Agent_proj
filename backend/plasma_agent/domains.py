@@ -28,16 +28,17 @@ class Domain:
         return {n for n in all_names if not n.startswith(self.exclude_tool_prefixes)}
 
 
-DOMAINS: dict[str, Domain] = {
-    "plasma": Domain("plasma", "電漿物理", "plasma_system.md"),
-    "general": Domain("general", "通用研究", "general_system.md", exclude_tool_prefixes=("comsol",)),
-}
+# Unified single research profile: all tools available (the agent picks the right engine per task;
+# field-specific knowledge comes from the lab/base knowledge base, not a hard-coded domain). The
+# per-thread `domain` column is kept for data compatibility but every value resolves here.
+RESEARCH = Domain("research", "研究", "general_system.md")
+DOMAINS: dict[str, Domain] = {"research": RESEARCH}
 
 
-def get(name: str | None) -> Domain:
-    """Resolve a domain name to a Domain, falling back to the configured default."""
-    return DOMAINS.get((name or "").strip()) or DOMAINS.get(settings.default_domain) or DOMAINS["plasma"]
+def get(name: str | None = None) -> Domain:
+    """Every thread uses the single unified research profile (domain selection was removed)."""
+    return RESEARCH
 
 
 def choices() -> list[dict]:
-    return [{"name": d.name, "label": d.label} for d in DOMAINS.values()]
+    return [{"name": RESEARCH.name, "label": RESEARCH.label}]

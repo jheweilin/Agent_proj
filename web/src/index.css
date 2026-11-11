@@ -104,6 +104,12 @@ h1, h2, h3, h4, .serif { font-family: "Source Serif 4 Variable", "Noto Serif TC"
 .brand-sub { font-size: 12px; color: var(--muted); }
 .topbtn { border: none; background: none; color: var(--text-2); padding: 6px 10px; border-radius: 8px; font-size: 13.5px; cursor: pointer; white-space: nowrap; }
 .topbtn:hover, .topbtn.on { background: var(--panel-2); color: var(--text); }
+.drawer-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border-2); background: var(--panel); color: var(--text); border-radius: 9px; padding: 6px 11px; font-size: 14px; cursor: pointer; }
+.drawer-btn:hover { border-color: var(--accent-2); background: var(--panel-2); }
+.drawer-btn.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.drawer-ico { font-size: 15px; line-height: 1; }
+.drawer-count { min-width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; border-radius: 999px; background: var(--panel-3); color: var(--text-2); font-size: 11.5px; font-weight: 600; }
+.drawer-btn.on .drawer-count { background: var(--accent); color: #fff; }
 .topdiv { width: 1px; height: 22px; background: var(--border); flex: none; }
 .topbtn-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 17px; height: 17px; padding: 0 5px; margin-left: 5px; border-radius: 999px; background: var(--run); color: #fff; font-size: 11px; font-weight: 700; vertical-align: middle; }
 .topbar .mode-seg { margin-bottom: 0; }
@@ -461,6 +467,13 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
 .approve-icon { width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 700; flex: none; }
 .approve-icon.ok { background: var(--ok); }
 .approve-actions { display: flex; gap: 8px; margin-top: 12px; }
+.plan-tools { margin-top: 12px; }
+.plan-tools-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.plan-tools-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.plan-tool { display: inline-flex; align-items: baseline; gap: 6px; border: 1px solid var(--border-2); background: var(--panel); border-radius: 999px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
+.plan-tool.off { opacity: .5; }
+.plan-tool-name { font-weight: 600; }
+.plan-tool-why { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .approve-reject { margin-top: 12px; }
 .approve-reject textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border-2); border-radius: 9px; padding: 8px 10px; font: inherit; background: var(--panel); color: var(--text); resize: vertical; outline: none; }
 .approve-reject textarea:focus { border-color: var(--accent-2); }

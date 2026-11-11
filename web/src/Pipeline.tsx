@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, Item, Lab, parsePipe, PlanStep, Project } from "./api";
+import { api, Item, Lab, parsePipe, PlanStep, PlanTool, Project } from "./api";
 import { Markdown } from "./Render";
 
 // stages actually implemented in the current phase; the rest show as "之後" (Phase D)
@@ -85,23 +85,30 @@ export function StageTracker({ project, live, onJump }: { project: Project; live
 type EditStep = { title: string; detail: string; source: string; enabled: boolean };
 
 export function ApprovalBar({ project, busy, onApprove, onReject }: {
-  project: Project; busy: boolean; onApprove: (planSteps?: PlanStep[]) => void; onReject: (fb: string) => void;
+  project: Project; busy: boolean; onApprove: (planSteps?: PlanStep[], planTools?: PlanTool[]) => void; onReject: (fb: string) => void;
 }) {
   const [rejecting, setRejecting] = useState(false);
   const [fb, setFb] = useState("");
   const [steps, setSteps] = useState<EditStep[]>([]);
+  const [tools, setTools] = useState<(PlanTool & { enabled: boolean })[]>([]);
   const plan = project.status === "awaiting_plan_approval";
   const accept = project.status === "awaiting_acceptance";
   const incoming = project.plan_steps;
+  const incomingTools = project.plan_tools;
   // sync the editable checklist when the planner's recorded steps arrive / change
   useEffect(() => {
     setSteps((incoming || []).map((s) => ({
       title: s.title || "", detail: s.detail || "", source: s.source || "", enabled: s.enabled !== false,
     })));
   }, [JSON.stringify(incoming || [])]);
+  useEffect(() => {
+    setTools((incomingTools || []).map((t) => ({ name: t.name || "", why: t.why || "", enabled: t.enabled !== false })));
+  }, [JSON.stringify(incomingTools || [])]);
   if (!plan && !accept) return null;
   const hasTodo = plan && steps.length > 0;
+  const hasTools = plan && tools.length > 0;
   const patch = (i: number, p: Partial<EditStep>) => setSteps((s) => s.map((x, j) => (j === i ? { ...x, ...p } : x)));
+  const toggleTool = (i: number, on: boolean) => setTools((s) => s.map((x, j) => (j === i ? { ...x, enabled: on } : x)));
   const anyOn = steps.some((s) => s.enabled);
   return (
     <div className="approve">
@@ -121,6 +128,20 @@ export function ApprovalBar({ project, busy, onApprove, onReject }: {
           <span className="grade-level">{project.grade.level}</span>
           <span className="grade-count">獨立驗證 {project.grade.passed}/{project.grade.total} 項通過</span>
           {project.grade.summary && <span className="grade-sum">{project.grade.summary}</span>}
+        </div>
+      )}
+      {hasTools && !rejecting && (
+        <div className="plan-tools">
+          <div className="plan-tools-title">會用到的工具／引擎（勾選要用的）</div>
+          <div className="plan-tools-grid">
+            {tools.map((t, i) => (
+              <label className={`plan-tool${t.enabled ? "" : " off"}`} key={i}>
+                <input type="checkbox" checked={t.enabled} disabled={busy} onChange={(e) => toggleTool(i, e.target.checked)} />
+                <span className="plan-tool-name">{t.name}</span>
+                {t.why && <span className="plan-tool-why muted small">{t.why}</span>}
+              </label>
+            ))}
+          </div>
         </div>
       )}
       {hasTodo && !rejecting && (
@@ -144,7 +165,7 @@ export function ApprovalBar({ project, busy, onApprove, onReject }: {
       {!rejecting ? (
         <div className="approve-actions">
           <button className="btn primary" disabled={busy || (hasTodo && !anyOn)}
-                  onClick={() => onApprove(hasTodo ? steps : undefined)}>
+                  onClick={() => onApprove(hasTodo ? steps : undefined, hasTools ? tools : undefined)}>
             {plan ? "核准並開始研究" : "接受並完成"}
           </button>
           <button className="btn ghost" disabled={busy} onClick={() => setRejecting(true)}>退回修改</button>

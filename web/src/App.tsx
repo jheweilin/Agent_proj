@@ -138,8 +138,9 @@ export default function App() {
           <span className="logo sm" />
           <span className="brand-name">{APP_NAME}</span>
         </div>
-        <button className={`topbtn ${sidebarOpen ? "on" : ""}`} onClick={() => setSidebarOpen((v) => !v)}>
-          對話{threads.length ? <span className="muted"> {threads.length}</span> : null}
+        <button className={`drawer-btn ${sidebarOpen ? "on" : ""}`} onClick={() => setSidebarOpen((v) => !v)}
+                title="開啟／收合對話列表">
+          <span className="drawer-ico">☰</span>對話{threads.length ? <span className="drawer-count">{threads.length}</span> : null}
         </button>
         <span className="topdiv" />
         <button className="btn primary small" onClick={() => setNewOpen(true)}>＋ 新研究</button>

@@ -22,7 +22,7 @@ export type Grant = {
   id: string; status: string; scope: string; scope_ref: string[]; note: string;
   grantor_lab_id: string; grantee_lab_id: string; grantor_name: string; grantee_name: string; created_at: string;
 };
-export type Thread = { id: string; title: string; domain: string; mode: string; config?: ThreadConfig; suggest_project?: boolean | null; created_at: string; updated_at: string; active_run_id: string | null };
+export type Thread = { id: string; title: string; domain: string; mode: string; config?: ThreadConfig; suggest_project?: boolean | null; promote_dismissed?: boolean; created_at: string; updated_at: string; active_run_id: string | null };
 
 export type ToolResult = {
   is_error: boolean; preview: string; output?: string; images?: string[]; ui?: any; seconds?: number;
@@ -74,10 +74,11 @@ export type KbDoc = {
 export type ProjectStage = { name: string; label: string };
 export type Grade = { level: string; passed: number; total: number; summary: string };
 export type PlanStep = { title: string; detail: string; source: string; enabled?: boolean };
+export type PlanTool = { name: string; why: string; enabled?: boolean };
 export type Nomination = { lab_id: string; lab_name: string; status: string; source?: string; doc_id?: string; detail?: string };
 export type Project = {
   stage: string; status: string; stages: ProjectStage[];
-  grade?: Grade | null; plan_steps?: PlanStep[]; nomination?: Nomination | null;
+  grade?: Grade | null; plan_steps?: PlanStep[]; plan_tools?: PlanTool[]; nomination?: Nomination | null;
 };
 
 // injected pipeline messages carry a machine marker so the UI renders them as stage cards / notes
@@ -139,11 +140,13 @@ export const api = {
   send: (id: string, text: string, uploads: string[]) =>
     req<{ run_id: string }>("POST", `/api/threads/${id}/messages`, { text, uploads }),
   stop: (runId: string) => req<{ ok: boolean }>("POST", `/api/runs/${runId}/stop`),
-  approve: (id: string, planSteps?: PlanStep[]) =>
+  approve: (id: string, planSteps?: PlanStep[], planTools?: PlanTool[]) =>
     req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/approve`,
-      planSteps ? { plan_steps: planSteps } : undefined),
+      (planSteps || planTools) ? { ...(planSteps ? { plan_steps: planSteps } : {}), ...(planTools ? { plan_tools: planTools } : {}) } : undefined),
   promote: (id: string) =>
     req<{ ok: boolean; run_id?: string }>("POST", `/api/threads/${id}/promote`),
+  dismissPromote: (id: string) =>
+    req<{ ok: boolean }>("POST", `/api/threads/${id}/dismiss-promote`),
   reject: (id: string, feedback: string) =>
     req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/reject`, { feedback }),
   toolDetail: (id: string, toolId: string) => req<ToolDetail>("GET", `/api/threads/${id}/tools/${toolId}`),

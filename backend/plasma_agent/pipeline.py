@@ -275,9 +275,11 @@ async def advance(run: Run, thread, user, domain, outer) -> str:
             except FileNotFoundError:
                 pass
             await _run_role(outer, roles.PLANNER, stage)
-            steps = (_read_json(thread.id, "plan.json") or {}).get("steps") or []
-            # capture plan text (for the Replicator) + structured steps (for the approval checklist)
-            await _set_card(thread.id, plan=await _latest_assistant_text(thread.id), plan_steps=steps)
+            pj = _read_json(thread.id, "plan.json") or {}
+            steps = pj.get("steps") or []
+            tools = pj.get("tools") or []
+            # capture plan text (for the Replicator) + structured steps + candidate tools (approval checklist)
+            await _set_card(thread.id, plan=await _latest_assistant_text(thread.id), plan_steps=steps, plan_tools=tools)
             stage = "approve_plan"
             await _set(thread.id, stage, "awaiting_plan_approval", outer)
             await outer.publish({"type": "awaiting_approval", "gate": "plan"})
@@ -343,23 +345,34 @@ def _approved_plan_note(steps) -> str:
     return "\n".join(lines)
 
 
-async def approve(thread, plan_steps=None) -> dict:
+def _tools_note(tools) -> str:
+    """The user's confirmed tool selection, appended to the approved-plan note (soft constraint)."""
+    chosen = [t for t in (tools or []) if t.get("enabled", True) and (t.get("name") or "").strip()]
+    if not chosen:
+        return ""
+    names = "、".join((t.get("name") or "").strip() for t in chosen)
+    return ("\n\n使用者確認這個研究**使用下列工具／引擎**（以這些為主，不要用未勾選的；COMSOL 等長時間求解前仍要先問）：\n"
+            + names)
+
+
+async def approve(thread, plan_steps=None, plan_tools=None) -> dict:
     """Advance through the current human gate. Plan gate → research; acceptance gate → completed.
 
-    `plan_steps` is the user's edited/checked checklist from the approval UI (None = not edited,
-    fall back to the steps the Planner recorded)."""
+    `plan_steps` / `plan_tools` are the user's edited/checked checklist + tool selection from the
+    approval UI (None = not edited, fall back to what the Planner recorded)."""
     async with SessionLocal() as s:
         p = (await s.execute(select(Project).where(Project.thread_id == thread.id))).scalar_one_or_none()
         if p is None:
             return {"ok": False, "detail": "這個對話不是研究專案"}
         if p.status == "awaiting_plan_approval":
             steps = plan_steps if plan_steps is not None else (p.card or {}).get("plan_steps") or []
+            tools = plan_tools if plan_tools is not None else (p.card or {}).get("plan_tools") or []
             run = Run(thread_id=thread.id, status="queued", model="", stage="research")
             s.add(run)
             await s.flush()
-            await _append_user(thread.id, run.id, _approved_plan_note(steps))
+            await _append_user(thread.id, run.id, _approved_plan_note(steps) + _tools_note(tools))
             p.stage, p.status = "research", "running"
-            p.card = {**(p.card or {}), "verify_retries": 0, "plan_steps": steps}   # fresh research cycle
+            p.card = {**(p.card or {}), "verify_retries": 0, "plan_steps": steps, "plan_tools": tools}
             await s.commit()
             await events.enqueue_run(str(run.id))
             return {"ok": True, "stage": "research", "status": "running", "run_id": str(run.id)}
@@ -522,5 +535,6 @@ def project_out(p: Project | None) -> dict | None:
         return None
     return {"stage": p.stage, "status": p.status, "grade": (p.card or {}).get("grade"),
             "plan_steps": (p.card or {}).get("plan_steps") or [],
+            "plan_tools": (p.card or {}).get("plan_tools") or [],
             "nomination": (p.card or {}).get("nomination"),
             "stages": [{"name": n, "label": l} for n, l in STAGE_LABELS]}

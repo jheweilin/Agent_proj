@@ -403,10 +403,12 @@ async def classify_project(thread_id: uuid.UUID, first_text: str) -> None:
     except Exception as e:
         log.warning("project classification failed: %s", e)
         return
+    if not flag:
+        return   # leave suggest_project null so later turns keep being re-evaluated
     async with SessionLocal() as s:
         t = await s.get(Thread, thread_id)
-        if t and t.suggest_project is None:
-            t.suggest_project = flag
+        if t and not t.suggest_project and not t.promote_dismissed and t.mode == "chat":
+            t.suggest_project = True
             await s.commit()
 
 
@@ -435,15 +437,21 @@ async def execute_run(run_id: str) -> None:
                           "started_at": utcnow().isoformat()})
 
     title_task = classify_task = None
+    hist = await _load_history(thread.id)
     if thread.title == "新對話":
-        hist = await _load_history(thread.id)
         first = next((m for m in hist if m["role"] == "user"), None)
         if first:
             txt = " ".join(b.get("text", "") for b in first["content"] if b.get("type") == "text")
             title_task = asyncio.create_task(make_title(thread.id, txt))
-            # chat opener → classify whether to suggest promoting to a research project
-            if getattr(thread, "mode", "chat") == "chat" and thread.suggest_project is None and txt.strip():
-                classify_task = asyncio.create_task(classify_project(thread.id, txt))
+    # chat mode: re-check the latest message every turn — suggest promoting whenever the conversation
+    # turns into a research task (not just the opener). Stop once flagged or the user dismissed it.
+    if (getattr(thread, "mode", "chat") == "chat" and not thread.suggest_project
+            and not getattr(thread, "promote_dismissed", False)):
+        last_user = next((m for m in reversed(hist) if m["role"] == "user"), None)
+        if last_user:
+            ltxt = " ".join(b.get("text", "") for b in last_user["content"] if b.get("type") == "text")
+            if ltxt.strip():
+                classify_task = asyncio.create_task(classify_project(thread.id, ltxt))
 
     status, error = "failed", None
     try:

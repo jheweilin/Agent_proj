@@ -44,8 +44,9 @@ def _write(thread_id: str, name: str, payload: dict) -> None:
 
 @tool(
     "record_plan",
-    """把這份計畫的「執行步驟」記成結構化清單，讓使用者在核准關卡可以逐項勾選與編輯（規劃階段結束前一定要呼叫）。
-步驟要具體、可執行、有先後順序；數值方法或參數有依據的標來源，沒有的標「假設」。""",
+    """把這份計畫的「執行步驟」與「會用到的工具／引擎」記成結構化清單，讓使用者在核准關卡逐項勾選與編輯（規劃階段結束前一定要呼叫）。
+步驟要具體、可執行、有先後順序；數值方法或參數有依據的標來源，沒有的標「假設」。
+`tools` 列出你判斷這個研究會用到的工具／模擬引擎（如 PlasmaPy、SciPy、SMILEI、COMSOL、matplotlib…），每個附一句為什麼，讓使用者勾選要用哪些。""",
     {
         "steps": {"type": "array", "minItems": 1,
                   "items": {"type": "object", "additionalProperties": False,
@@ -54,13 +55,20 @@ def _write(thread_id: str, name: str, payload: dict) -> None:
                                 "detail": {"type": "string", "description": "做法與要檢查什麼；沒有就空字串"},
                                 "source": {"type": "string", "description": "依據的文獻標題/DOI；若是自訂假設就填「假設」，沒有就空字串"}},
                             "required": ["title", "detail", "source"]}},
+        "tools": {"type": "array",
+                  "description": "這個研究會用到的工具／模擬引擎，供使用者勾選",
+                  "items": {"type": "object", "additionalProperties": False,
+                            "properties": {
+                                "name": {"type": "string", "description": "工具／引擎名稱，如 PlasmaPy、COMSOL、SciPy"},
+                                "why": {"type": "string", "description": "為什麼這個研究需要它，一句話"}},
+                            "required": ["name", "why"]}},
     },
     ["steps"],
 )
 async def record_plan(ctx: ToolContext, args: dict) -> ToolResult:
-    _write(ctx.thread_id, "plan.json", {"steps": args["steps"]})
+    _write(ctx.thread_id, "plan.json", {"steps": args["steps"], "tools": args.get("tools") or []})
     n = len(args["steps"])
-    return ToolResult(f"已記錄 {n} 個執行步驟，等待使用者在核准關卡逐項確認。", preview=f"計畫 {n} 步")
+    return ToolResult(f"已記錄 {n} 個執行步驟與候選工具，等待使用者在核准關卡確認。", preview=f"計畫 {n} 步")
 
 
 @tool(

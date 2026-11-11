@@ -1,5 +1,5 @@
 import { DragEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, Attachment, Block, eventsUrl, fmtDuration, fmtTime, fmtTokens, Item, modelName, parsePipe, PlanStep, Project, RunInfo, ToolBlock, Usage } from "./api";
+import { api, Attachment, Block, eventsUrl, fmtDuration, fmtTime, fmtTokens, Item, modelName, parsePipe, PlanStep, PlanTool, Project, RunInfo, ToolBlock, Usage } from "./api";
 import Panel, { PanelTab } from "./Panel";
 import { ApprovalBar, EvidenceCard, NominateCard, PipelineNote, StageTracker, stageLabels } from "./Pipeline";
 import { AssistantTurn, FileOpenCtx, KbDocOpenCtx, KbDocRef, Markdown } from "./Render";
@@ -37,7 +37,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   const [error, setError] = useState("");
-  const [panelOpen, setPanelOpen] = useState(() => window.innerWidth > 1200);
+  const [panelOpen, setPanelOpen] = useState(false);   // closed until an agent run is active (then auto-opens)
   const [panelTab, setPanelTab] = useState<PanelTab>("status");
   const [selected, setSelected] = useState<ToolBlock | null>(null);
   const [filePath, setFilePath] = useState<string | null>(null);
@@ -59,6 +59,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
     setMode(t.mode);
     setProject(m.project);
     setSuggestProject(t.suggest_project ?? null);
+    setDismissPromote(!!t.promote_dismissed);
     return t.active_run_id;
   }, [threadId]);
 
@@ -139,7 +140,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
       onActivity();
     } catch (e: any) { setError(e.message); } finally { setGateBusy(false); }
   }, [load, connect, onActivity]);
-  const approve = (planSteps?: PlanStep[]) => passGate(() => api.approve(threadId, planSteps));
+  const approve = (planSteps?: PlanStep[], planTools?: PlanTool[]) => passGate(() => api.approve(threadId, planSteps, planTools));
   const reject = (fb: string) => passGate(() => api.reject(threadId, fb));
   const promote = () => passGate(() => api.promote(threadId));
 
@@ -168,6 +169,9 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   const openFile = (p: string) => { setFilePath(p); setPanelTab("files"); setPanelOpen(true); };
   const openKbDoc = (d: KbDocRef) => { setKbDoc(d); setPanelTab("kbdoc"); setPanelOpen(true); };
   const openPanel = (t: PanelTab) => { if (panelOpen && panelTab === t) setPanelOpen(false); else { setPanelTab(t); setPanelOpen(true); } };
+  // the side panel (steps/files/status) auto-opens only while an agent run is active; it stays closed
+  // on a fresh conversation. The user can still open it manually via the head chips.
+  useEffect(() => { if (activeRun) setPanelOpen(true); }, [activeRun]);
 
   const runById = useMemo(() => Object.fromEntries(runs.map((r) => [r.id, r])), [runs]);
   const shown = activeRun ? items.filter((it) => !(it.kind === "assistant" && it.run_id === activeRun)) : items;
@@ -198,6 +202,10 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
         <header className="chat-head">
           <div className="chat-title" title={title}>{title || "對話"}</div>
           <span className="spacer" />
+          {!isProject && !activeRun && items.length > 0 && (
+            <button className="btn ghost small head-promote" disabled={gateBusy} onClick={promote}
+                    title="把這個對話接上九階段研究流程（釐清→規劃→研究→驗證→審查，關鍵處你把關）">轉成研究專案</button>
+          )}
           <div className="head-chips">
             <button
               className={"head-chip" + (panelOpen && panelTab === "status" ? " on" : activeRun ? " running" : lastRun?.status === "failed" ? " bad" : "")}
@@ -282,7 +290,8 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
                 </div>
                 <div className="promote-actions">
                   <button className="btn primary small" disabled={gateBusy} onClick={promote}>轉成研究專案</button>
-                  <button className="btn ghost small" disabled={gateBusy} onClick={() => setDismissPromote(true)}>繼續用對話</button>
+                  <button className="btn ghost small" disabled={gateBusy}
+                        onClick={() => { setDismissPromote(true); api.dismissPromote(threadId).catch(() => {}); }}>繼續用對話</button>
                 </div>
               </div>
             )}

@@ -154,5 +154,6 @@ docker compose logs --tail 50 worker
 - **#3 容器級複現隔離**（目前 prompt 級；低 CP 值、建議擱著）。
 - **#6 COMSOL 實題端到端驗收**（要使用者同意，因 pipeline 會送 ≥3 次求解到共用服務）。
 - **nid API 身份驗證串接**（教職員身份目前用 `FACULTY_EMAILS` 橋接，seam 在登入回填 `User.is_faculty`）。
-- 通用輕量沙盒映像、之後改用獨立 AWS IAM 使用者、要不要提供 Tavily key（目前 ddgs）。
+- **通用沙盒映像（進行中）**：`deploy/sandbox-general.Dockerfile`（FROM plasma 映像＋跨領域開源：R、GDAL/GeoPandas、statsmodels/sklearn/OR-Tools/pulp、shapely/trimesh、nltk/文件處理…），build 成 `plasma-agent-sandbox:general-1.0`、改 `SANDBOX_IMAGE` 指向它。沙盒本來就能自己 pip/apt 裝開源套件（root＋對外網路，已實測 statsmodels/apt tree 成功），所以預裝只是加速。**後續可能規劃：以學院/領域群組切映像**——逢甲共 10 學院，但工具需求收斂成 ~3–4 群（科學計算／資料統計最佳化／地理空間CAD／AI-GPU）；只有很重又不重疊的特例（Blender、OpenFOAM、特定模擬）才值得特化映像，且需要 lab→學院的路由資料。先 1 顆通用，特例現裝。
+- 之後改用獨立 AWS IAM 使用者、要不要提供 Tavily key（目前 ddgs）。
 - **`deploy/.env` 的 `ADMIN_EMAILS`／`FACULTY_EMAILS` 要填真實的管理員／老師 email**（目前是測試帳號 lab-admin/lab-teacher@plasma.local，驗收用）。改 .env 後要重啟 api/worker（先確認 runs 佇列＝0）。

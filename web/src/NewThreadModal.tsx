@@ -67,19 +67,13 @@ export default function NewThreadModal(
         <div className="mode-cards">
           <button className={`mode-card ${mode === "chat" ? "on" : ""}`} onClick={() => setMode("chat")}>
             <span className="mc-title">一般對話</span>
-            <span className="mc-desc">單一 AI 助理配好這個領域的知識與工具，直接問、直接做。適合快速問答、計算、畫圖。</span>
+            <span className="mc-desc">單一 AI 助理，全部工具可用、會查你所屬實驗室的知識庫，直接問、直接做。適合快速問答、計算、畫圖。</span>
           </button>
           <button className={`mode-card ${mode === "project" ? "on" : ""}`} onClick={() => setMode("project")}>
             <span className="mc-title">研究專案</span>
             <span className="mc-desc">完整九階段流程：AI 先幫你釐清問題、查證據、擬計畫，<strong>你核准後</strong>才動手做，再獨立驗證、複現、審查並評等，最後<strong>由你驗收</strong>。</span>
           </button>
         </div>
-
-        <label className="field-label">研究領域</label>
-        <select className="domain-select wide" value={domain} onChange={(e) => setDomain(e.target.value)}>
-          {domains.map((d) => <option key={d.name} value={d.name}>{d.label}</option>)}
-        </select>
-        <p className="field-hint">決定 AI 的系統提示與可用工具（例如「電漿物理」含 COMSOL）。</p>
 
         <button className={`adv-toggle ${advanced ? "open" : ""}`} onClick={() => setAdvanced((v) => !v)}>
           <span className="chev">{advanced ? "▾" : "▸"}</span> 進階選項

@@ -46,9 +46,10 @@ class Thread(Base):
     # per-thread runtime config set at creation: {"models": {agent_key: model_id}, "effort", "max_iterations"}.
     # Missing keys fall back to settings defaults. See agent.thread_runtime.
     config: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
-    # chat mode only: null = not yet classified; true = the opener looks like a research task
-    # worth promoting to the project pipeline (UI then offers a one-click 轉成研究專案). See agent.classify_project.
+    # chat mode: true once any message makes the conversation look like a research task worth
+    # promoting (UI offers a one-click 轉成研究專案). Re-checked every turn until true or dismissed.
     suggest_project: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    promote_dismissed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -246,6 +247,8 @@ async def init_db() -> None:
             "ALTER TABLE threads ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}'::jsonb")
         await conn.exec_driver_sql(
             "ALTER TABLE threads ADD COLUMN IF NOT EXISTS suggest_project BOOLEAN")
+        await conn.exec_driver_sql(
+            "ALTER TABLE threads ADD COLUMN IF NOT EXISTS promote_dismissed BOOLEAN NOT NULL DEFAULT false")
         # knowledge-flywheel columns on kb_documents (existing rows → upload/reference/approved)
         await conn.exec_driver_sql(
             "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS origin VARCHAR(20) NOT NULL DEFAULT 'upload'")

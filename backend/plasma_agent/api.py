@@ -116,6 +116,7 @@ def _thread_out(t: Thread, active: Run | None = None) -> dict:
     return {"id": str(t.id), "title": t.title, "domain": getattr(t, "domain", "plasma"),
             "mode": getattr(t, "mode", "chat"), "config": getattr(t, "config", None) or {},
             "suggest_project": getattr(t, "suggest_project", None),
+            "promote_dismissed": getattr(t, "promote_dismissed", False),
             "created_at": t.created_at.isoformat(),
             "updated_at": t.updated_at.isoformat(), "active_run_id": str(active.id) if active else None}
 
@@ -437,8 +438,15 @@ class PlanStepIn(BaseModel):
     enabled: bool = True
 
 
+class PlanToolIn(BaseModel):
+    name: str = Field(default="", max_length=120)
+    why: str = Field(default="", max_length=600)
+    enabled: bool = True
+
+
 class ApproveIn(BaseModel):
     plan_steps: list[PlanStepIn] | None = Field(default=None, max_length=100)
+    plan_tools: list[PlanToolIn] | None = Field(default=None, max_length=40)
 
 
 @app.post("/api/threads/{thread_id}/approve")
@@ -446,15 +454,25 @@ async def approve_gate(thread_id: str, body: ApproveIn | None = Body(default=Non
                        user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
     """Pass the current human gate: approve the plan (→ research) or accept the results (→ done).
 
-    The plan gate may carry the user's edited/checked step checklist (`plan_steps`)."""
+    The plan gate may carry the user's edited/checked step checklist + tool selection."""
     t = await _own_thread(thread_id, user, s)
     if await _active_run(t.id, s):
         raise HTTPException(409, "這個專案還在執行中")
     steps = [st.model_dump() for st in body.plan_steps] if body and body.plan_steps is not None else None
-    res = await pipeline.approve(t, steps)
+    tools = [tl.model_dump() for tl in body.plan_tools] if body and body.plan_tools is not None else None
+    res = await pipeline.approve(t, steps, tools)
     if not res.get("ok"):
         raise HTTPException(400, res.get("detail", "目前無法核准"))
     return res
+
+
+@app.post("/api/threads/{thread_id}/dismiss-promote")
+async def dismiss_promote(thread_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    """Stop suggesting 轉成研究專案 for this chat (user chose 繼續用對話); persists so it won't re-appear."""
+    t = await _own_thread(thread_id, user, s)
+    t.promote_dismissed = True
+    await s.commit()
+    return {"ok": True}
 
 
 @app.post("/api/threads/{thread_id}/promote")
