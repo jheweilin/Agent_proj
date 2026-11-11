@@ -79,9 +79,11 @@ export type Grade = { level: string; passed: number; total: number; summary: str
 export type PlanStep = { title: string; detail: string; source: string; enabled?: boolean };
 export type PlanTool = { name: string; why: string; enabled?: boolean };
 export type Nomination = { lab_id: string; lab_name: string; status: string; source?: string; doc_id?: string; detail?: string };
+export type ClarifyQuestion = { question: string; why?: string };
 export type Project = {
   stage: string; status: string; stages: ProjectStage[];
-  grade?: Grade | null; plan_steps?: PlanStep[]; plan_tools?: PlanTool[]; nomination?: Nomination | null;
+  grade?: Grade | null; plan_steps?: PlanStep[]; plan_tools?: PlanTool[];
+  questions?: ClarifyQuestion[]; nomination?: Nomination | null;
 };
 
 // injected pipeline messages carry a machine marker so the UI renders them as stage cards / notes
@@ -152,6 +154,8 @@ export const api = {
     req<{ ok: boolean }>("POST", `/api/threads/${id}/dismiss-promote`),
   reject: (id: string, feedback: string) =>
     req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/reject`, { feedback }),
+  answerClarify: (id: string, answers: string) =>
+    req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/clarify`, { answers }),
   toolDetail: (id: string, toolId: string) => req<ToolDetail>("GET", `/api/threads/${id}/tools/${toolId}`),
   shareThread: (id: string, shared: boolean) =>
     req<{ ok: boolean; shared: boolean }>("POST", `/api/threads/${id}/share`, { shared }),

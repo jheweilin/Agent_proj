@@ -445,8 +445,8 @@ async def post_message(thread_id: str, body: MessageIn, user: User = Depends(cur
         raise HTTPException(409, "這個對話還在執行中，請等它結束或先按停止")
     if getattr(t, "mode", "chat") == "project":
         p = await pipeline.gate_status(t.id)
-        if p and p.status in ("awaiting_plan_approval", "awaiting_acceptance"):
-            raise HTTPException(409, "這個研究專案正在等你核准或退回目前的關卡，請用核准／退回按鈕")
+        if p and p.status in ("awaiting_clarification", "awaiting_plan_approval", "awaiting_acceptance"):
+            raise HTTPException(409, "這個研究專案正在等你回覆／核准目前的關卡，請用上方的卡片處理")
     last = (await s.execute(select(Message).where(Message.thread_id == t.id)
                             .order_by(desc(Message.id)).limit(1))).scalar_one_or_none()
     previous = {"role": last.role, "content": last.content} if last else None
@@ -548,6 +548,23 @@ async def reject_gate(thread_id: str, body: RejectIn, user: User = Depends(curre
     res = await pipeline.reject(t, body.feedback or "")
     if not res.get("ok"):
         raise HTTPException(400, res.get("detail", "目前無法退回"))
+    return res
+
+
+class AnswerIn(BaseModel):
+    answers: str = Field(default="", max_length=8000)
+
+
+@app.post("/api/threads/{thread_id}/clarify")
+async def answer_clarify(thread_id: str, body: AnswerIn, user: User = Depends(current_user),
+                         s: AsyncSession = Depends(get_session)):
+    """Answer the clarifier's questions at the clarification gate → re-run clarify with the answers."""
+    t = await _own_thread(thread_id, user, s)
+    if await _active_run(t.id, s):
+        raise HTTPException(409, "這個專案還在執行中")
+    res = await pipeline.answer_clarification(t, body.answers or "")
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("detail", "目前沒有待回覆的釐清"))
     return res
 
 

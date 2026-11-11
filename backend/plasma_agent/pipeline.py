@@ -262,7 +262,18 @@ async def advance(run: Run, thread, user, domain, outer) -> str:
 
     while True:
         if stage == "clarify":
+            try:   # drop stale questions from a previous clarify pass
+                (sandbox.workspace_dir(str(thread.id)) / ".pipeline" / "questions.json").unlink()
+            except FileNotFoundError:
+                pass
             await _run_role(outer, roles.CLARIFIER, stage)
+            q = (_read_json(thread.id, "questions.json") or {}).get("questions") or []
+            if q:   # clarifier needs the user: pause at the clarification gate
+                await _set_card(thread.id, questions=q)
+                await _set(thread.id, "clarify", "awaiting_clarification", outer)
+                await outer.publish({"type": "awaiting_approval", "gate": "clarify"})
+                break
+            await _set_card(thread.id, questions=[])
             stage = "retrieve"
             await _set(thread.id, stage, "running", outer)
         elif stage == "retrieve":
@@ -436,6 +447,41 @@ async def reject(thread, feedback: str) -> dict:
         return {"ok": False, "detail": "目前沒有待退回的關卡"}
 
 
+def _clarify_answers_note(questions, answers: str) -> str:
+    """The user's answers to the clarifier's questions, echoed with the questions for context."""
+    lines = [_note("clarify_answer"),
+             "（使用者回覆了釐清問題。請據此更新釐清結果；若資訊已足夠就**不要再呼叫 ask_user**，"
+             "把這些答案併進「範圍與假設」直接完成釐清、進入規劃。）", ""]
+    qs = [q.get("question", "") for q in (questions or []) if q.get("question")]
+    if qs:
+        lines.append("你先前問的問題：")
+        lines += [f"{i}. {q}" for i, q in enumerate(qs, 1)]
+        lines.append("")
+    lines.append("使用者的回覆：")
+    lines.append(answers.strip() or "（使用者未填具體內容，請用合理預設並在假設中註明。）")
+    return "\n".join(lines)
+
+
+async def answer_clarification(thread, answers: str) -> dict:
+    """Resume from the clarification gate: inject the user's answers and re-run the clarifier."""
+    async with SessionLocal() as s:
+        p = (await s.execute(select(Project).where(Project.thread_id == thread.id))).scalar_one_or_none()
+        if p is None:
+            return {"ok": False, "detail": "這個對話不是研究專案"}
+        if p.status != "awaiting_clarification":
+            return {"ok": False, "detail": "目前沒有待回覆的釐清問題"}
+        questions = (p.card or {}).get("questions") or []
+        run = Run(thread_id=thread.id, status="queued", model="", stage="clarify")
+        s.add(run)
+        await s.flush()
+        await _append_user(thread.id, run.id, _clarify_answers_note(questions, answers or ""))
+        p.stage, p.status = "clarify", "running"
+        p.card = {**(p.card or {}), "questions": []}
+        await s.commit()
+        await events.enqueue_run(str(run.id))
+        return {"ok": True, "stage": "clarify", "status": "running", "run_id": str(run.id)}
+
+
 # ---------------------------------------------------------------- knowledge flywheel: nominate research → lab KB
 
 async def _first_user_text(thread_id: uuid.UUID) -> str:
@@ -538,5 +584,6 @@ def project_out(p: Project | None) -> dict | None:
     return {"stage": p.stage, "status": p.status, "grade": (p.card or {}).get("grade"),
             "plan_steps": (p.card or {}).get("plan_steps") or [],
             "plan_tools": (p.card or {}).get("plan_tools") or [],
+            "questions": (p.card or {}).get("questions") or [],
             "nomination": (p.card or {}).get("nomination"),
             "stages": [{"name": n, "label": l} for n, l in STAGE_LABELS]}

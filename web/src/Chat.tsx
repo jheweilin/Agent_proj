@@ -147,6 +147,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   }, [load, connect, onActivity]);
   const approve = (planSteps?: PlanStep[], planTools?: PlanTool[]) => passGate(() => api.approve(threadId, planSteps, planTools));
   const reject = (fb: string) => passGate(() => api.reject(threadId, fb));
+  const answerClarify = (answers: string) => passGate(() => api.answerClarify(threadId, answers));
   const promote = () => passGate(() => api.promote(threadId));
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -188,7 +189,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   const liveTokens = (live.usage.input_tokens || 0) + (live.usage.cache_read_input_tokens || 0) + (live.usage.cache_creation_input_tokens || 0);
   const isProject = mode === "project";
   const atGate = isProject && !activeRun && !!project &&
-    (project.status === "awaiting_plan_approval" || project.status === "awaiting_acceptance");
+    (project.status === "awaiting_clarification" || project.status === "awaiting_plan_approval" || project.status === "awaiting_acceptance");
   const ann = useMemo(() => (isProject ? stageLabels(shown)
     : { labels: {} as Record<number, string>, stages: {} as Record<number, string> }), [shown, isProject]);
   const jumpToStage = useCallback((stage: string) => {
@@ -325,7 +326,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
                 </div>
               </div>
             )}
-            {atGate && project && <ApprovalBar project={project} busy={gateBusy} onApprove={approve} onReject={reject} />}
+            {atGate && project && <ApprovalBar project={project} busy={gateBusy} onApprove={approve} onReject={reject} onAnswer={answerClarify} />}
             {isProject && !activeRun && project?.status === "completed" && <NominateCard project={project} threadId={threadId} />}
             <div ref={bottomRef} />
           </div>
@@ -346,7 +347,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
           <div className="composer-box">
             <textarea value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey}
               rows={Math.min(10, Math.max(2, text.split("\n").length))}
-              placeholder={atGate ? "請先用上方的核准／退回處理目前的關卡"
+              placeholder={atGate ? "請先用上方的卡片處理目前的關卡（回覆／核准／退回）"
                 : activeRun ? (stopping ? "停止中…等目前步驟結束就會中斷" : "執行中…可以按「停止」中斷")
                 : isProject ? "描述你的研究想法，流程會自動開始…" : "描述你的研究問題，或上傳資料與文件…"}
               disabled={!!activeRun || atGate} />

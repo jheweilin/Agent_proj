@@ -43,6 +43,27 @@ def _write(thread_id: str, name: str, payload: dict) -> None:
 
 
 @tool(
+    "ask_user",
+    """只在釐清階段使用：當有【會改變整個做法、而你無法合理假設】的關鍵未知時，呼叫這個工具把問題丟給使用者，
+流程會**暫停等他回答**，不要用假設硬做。能合理假設的（次要參數、可取標準值的）就不要問，直接寫進假設。
+一次把所有必要問題一起問完，不要一題一題問。沒有這種關鍵未知時，不要呼叫這個工具，直接完成釐清。""",
+    {
+        "questions": {"type": "array", "minItems": 1,
+                      "items": {"type": "object", "additionalProperties": False,
+                                "properties": {
+                                    "question": {"type": "string", "description": "要問使用者的問題，一句話講清楚"},
+                                    "why": {"type": "string", "description": "為什麼這題會改變做法、不能自己假設；沒有就空字串"}},
+                                "required": ["question"]}},
+    },
+    ["questions"],
+)
+async def ask_user(ctx: ToolContext, args: dict) -> ToolResult:
+    _write(ctx.thread_id, "questions.json", {"questions": args["questions"]})
+    n = len(args["questions"])
+    return ToolResult(f"已記下 {n} 個要向使用者確認的問題，流程會暫停等待回覆。", preview=f"待使用者回覆 {n} 題")
+
+
+@tool(
     "record_plan",
     """把這份計畫的「執行步驟」與「會用到的工具／引擎」記成結構化清單，讓使用者在核准關卡逐項勾選與編輯（規劃階段結束前一定要呼叫）。
 步驟要具體、可執行、有先後順序；數值方法或參數有依據的標來源，沒有的標「假設」。

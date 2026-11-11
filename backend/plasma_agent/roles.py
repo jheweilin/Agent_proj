@@ -15,6 +15,9 @@ READONLY_TOOLS = {"read_file", "list_files", "see_image", "kb_search", "kb_read"
 # the only tool the planner may use: record its execution steps as an editable checklist
 PLANNER_TOOLS = {"record_plan"}
 
+# the only tool the clarifier may use: pause and ask the user when a critical unknown blocks planning
+CLARIFIER_TOOLS = {"ask_user"}
+
 
 @dataclass(frozen=True)
 class Role:
@@ -29,6 +32,8 @@ class Role:
             return set()
         if self.tool_mode == "plan":   # planner: only record_plan (structured steps for approval)
             return {n for n in domain_set if n in PLANNER_TOOLS}
+        if self.tool_mode == "clarify":  # clarifier: only ask_user (pause for the user when truly blocked)
+            return {n for n in domain_set if n in CLARIFIER_TOOLS}
         if self.tool_mode == "readonly":
             return {n for n in domain_set if n in READONLY_TOOLS}
         if self.tool_mode == "replicate":  # independent redo: no KB/web/comsol, no other verdict tools
@@ -39,17 +44,22 @@ class Role:
 
 CLARIFIER = Role(
     name="clarifier", label="釐清",
-    tool_mode="none",
+    tool_mode="clarify",
     overlay="""
 # 目前階段：釐清（Clarifier）
 
-你現在是研究流程的第一關：把使用者的研究想法整理成一個**明確、可執行的問題**。這一步**不要做任何計算、不要用工具**，只輸出釐清結果，然後結束回合。
+你現在是研究流程的第一關：把使用者的研究想法整理成一個**明確、可執行的問題**。這一步**不要做任何計算、不要跑模擬**。
 
 用繁體中文輸出，結構如下：
 1. **問題陳述**：把想法收斂成一句精確的研究問題（含系統、條件、要回答什麼）。
 2. **範圍與假設**：你為了讓問題可執行而採取的合理預設（物理條件、幾何、模型選擇等），每一項說明理由。
 3. **預測**：在開始計算前，你對結果的量級或趨勢的預期（之後可用來對照）。
-4. **待確認事項**：會改變整個做法、而你無法合理假設的關鍵未知（若沒有，就寫「無，可直接進入規劃」）。
+4. **待確認事項**：會改變整個做法、而你無法合理假設的關鍵未知。
+
+**關鍵規則——遇到會改變整個做法、你無法合理假設的關鍵未知時，呼叫 `ask_user` 把問題交給使用者，流程會暫停等他回答；不要用假設硬做、也不要把「問使用者」寫成一個計畫步驟留到後面。** 典型例子：幾何/檔案的物理意義（是管道內腔還是實心固體）、單位與實際尺寸、目標指標、邊界條件或耦合類型（如「雙向流」到底指什麼）。
+- 能用標準值或合理預設帶過的次要參數**不要問**，直接寫進「範圍與假設」。
+- 要問就**一次把所有必要問題一起問完**（ask_user 的 questions 一次給齊），不要一題一題。
+- 真的沒有這種關鍵未知時，**不要呼叫 ask_user**，在「待確認事項」寫「無，可直接進入規劃」，結束回合。
 
 保持精簡、具體。不要輸出計畫或步驟（那是下一關 Planner 的事）。
 """.strip(),

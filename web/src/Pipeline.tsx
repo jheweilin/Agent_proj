@@ -84,13 +84,16 @@ export function StageTracker({ project, live, onJump }: { project: Project; live
 
 type EditStep = { title: string; detail: string; source: string; enabled: boolean };
 
-export function ApprovalBar({ project, busy, onApprove, onReject }: {
-  project: Project; busy: boolean; onApprove: (planSteps?: PlanStep[], planTools?: PlanTool[]) => void; onReject: (fb: string) => void;
+export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer }: {
+  project: Project; busy: boolean; onApprove: (planSteps?: PlanStep[], planTools?: PlanTool[]) => void;
+  onReject: (fb: string) => void; onAnswer: (answers: string) => void;
 }) {
   const [rejecting, setRejecting] = useState(false);
   const [fb, setFb] = useState("");
+  const [ans, setAns] = useState("");
   const [steps, setSteps] = useState<EditStep[]>([]);
   const [tools, setTools] = useState<(PlanTool & { enabled: boolean })[]>([]);
+  const clarify = project.status === "awaiting_clarification";
   const plan = project.status === "awaiting_plan_approval";
   const accept = project.status === "awaiting_acceptance";
   const incoming = project.plan_steps;
@@ -104,12 +107,46 @@ export function ApprovalBar({ project, busy, onApprove, onReject }: {
   useEffect(() => {
     setTools((incomingTools || []).map((t) => ({ name: t.name || "", why: t.why || "", enabled: t.enabled !== false })));
   }, [JSON.stringify(incomingTools || [])]);
+  if (clarify) {
+    const qs = project.questions || [];
+    return (
+      <div className="approve clarify">
+        <div className="approve-head">
+          <span className="approve-icon ask">？</span>
+          <div>
+            <strong>需要你回覆</strong>
+            <div className="approve-sub muted small">agent 想先確認幾件會影響整個做法的事；回答後會據此重新規劃。</div>
+          </div>
+        </div>
+        {qs.length > 0 && (
+          <ol className="clarify-qs">
+            {qs.map((q, i) => (
+              <li key={i}>
+                <span className="clarify-q">{q.question}</span>
+                {q.why && <span className="clarify-why muted small">{q.why}</span>}
+              </li>
+            ))}
+          </ol>
+        )}
+        <textarea className="clarify-answer" value={ans} rows={4} autoFocus disabled={busy}
+          placeholder="在這裡回答上面的問題、補充尺寸／單位／邊界條件等…（可逐題回，也可整段寫）"
+          onChange={(e) => setAns(e.target.value)} />
+        <div className="approve-actions">
+          <button className="btn primary" disabled={busy || !ans.trim()} onClick={() => onAnswer(ans)}>送出回覆並繼續</button>
+          <button className="btn ghost" disabled={busy} onClick={() => onAnswer("")}
+                  title="不提供，讓 agent 用合理預設繼續（會在假設中註明）">用預設繼續</button>
+        </div>
+      </div>
+    );
+  }
   if (!plan && !accept) return null;
   const hasTodo = plan && steps.length > 0;
   const hasTools = plan && tools.length > 0;
   // auto-grow the plan textareas so long content wraps instead of being clipped to one line
   const fit = (el: HTMLTextAreaElement | null) => { if (el) { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; } };
   const patch = (i: number, p: Partial<EditStep>) => setSteps((s) => s.map((x, j) => (j === i ? { ...x, ...p } : x)));
+  const addStep = () => setSteps((s) => [...s, { title: "", detail: "", source: "自訂", enabled: true }]);
+  const removeStep = (i: number) => setSteps((s) => s.filter((_, j) => j !== i));
   const toggleTool = (i: number, on: boolean) => setTools((s) => s.map((x, j) => (j === i ? { ...x, enabled: on } : x)));
   const anyOn = steps.some((s) => s.enabled);
   return (
@@ -148,22 +185,26 @@ export function ApprovalBar({ project, busy, onApprove, onReject }: {
       )}
       {hasTodo && !rejecting && (
         <div className="plan-todo">
+          <div className="plan-todo-hint muted small">勾選要執行的步驟；標題與做法可直接點進去修改，也可新增或刪除步驟。</div>
           {steps.map((st, i) => (
             <div className={`plan-step${st.enabled ? "" : " off"}`} key={i}>
               <input type="checkbox" checked={st.enabled} disabled={busy}
                      onChange={(e) => patch(i, { enabled: e.target.checked })} />
               <div className="plan-step-main">
-                <textarea className="plan-step-title" value={st.title} disabled={busy || !st.enabled} rows={1}
-                          ref={fit} onInput={(e) => fit(e.currentTarget)}
+                <textarea className="plan-step-title editable" value={st.title} disabled={busy || !st.enabled} rows={1}
+                          placeholder="步驟標題…" ref={fit} onInput={(e) => fit(e.currentTarget)}
                           onChange={(e) => patch(i, { title: e.target.value })} />
-                <textarea className="plan-step-detail" value={st.detail} disabled={busy || !st.enabled} rows={1}
+                <textarea className="plan-step-detail editable" value={st.detail} disabled={busy || !st.enabled} rows={1}
                           placeholder="做法與要檢查什麼（可留空）"
                           ref={fit} onInput={(e) => fit(e.currentTarget)}
                           onChange={(e) => patch(i, { detail: e.target.value })} />
                 {st.source && <span className="plan-step-src">來源：{st.source}</span>}
               </div>
+              <button className="plan-step-del" title="刪除這個步驟" disabled={busy}
+                      onClick={() => removeStep(i)}>✕</button>
             </div>
           ))}
+          <button className="plan-step-add" disabled={busy} onClick={addStep}>＋ 新增步驟</button>
         </div>
       )}
       {!rejecting ? (
