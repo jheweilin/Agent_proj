@@ -568,6 +568,18 @@ async def answer_clarify(thread_id: str, body: AnswerIn, user: User = Depends(cu
     return res
 
 
+@app.post("/api/threads/{thread_id}/resume")
+async def resume_project(thread_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    """Continue an interrupted research project from where its last run stopped/failed."""
+    t = await _own_thread(thread_id, user, s)
+    if await _active_run(t.id, s):
+        raise HTTPException(409, "這個專案還在執行中")
+    res = await pipeline.resume(t)
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("detail", "目前沒有可續跑的研究"))
+    return res
+
+
 class NominateIn(BaseModel):
     lab_id: str = Field(min_length=1)
 

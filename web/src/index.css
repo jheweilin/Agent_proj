@@ -493,7 +493,9 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
 .approve-icon { width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 700; flex: none; }
 .approve-icon.ok { background: var(--ok); }
 .approve-icon.ask { background: var(--run); }
+.approve-icon.warn { background: var(--muted); }
 .approve.clarify { border-color: var(--run); background: var(--run-soft); }
+.approve.interrupted { border-color: var(--border-2); background: var(--panel-2); }
 .approve-sub { margin-top: 2px; }
 .clarify-qs { margin: 12px 0 10px; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; }
 .clarify-qs li { line-height: 1.5; }

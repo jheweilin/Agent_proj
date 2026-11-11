@@ -462,6 +462,38 @@ def _clarify_answers_note(questions, answers: str) -> str:
     return "\n".join(lines)
 
 
+async def mark_interrupted(thread_id: uuid.UUID) -> str | None:
+    """A project run ended as stopped/failed mid-stage — flip the project out of 'running' so the UI
+    stops looking like it's still working and can offer a resume. Returns the stage, or None if the
+    project was at a gate / not running (nothing to mark)."""
+    async with SessionLocal() as s:
+        p = (await s.execute(select(Project).where(Project.thread_id == thread_id))).scalar_one_or_none()
+        if p and p.status == "running":
+            p.status = "interrupted"
+            await s.commit()
+            return p.stage
+    return None
+
+
+async def resume(thread) -> dict:
+    """Continue an interrupted project from where it stopped (re-enqueue a run at the current stage)."""
+    async with SessionLocal() as s:
+        p = (await s.execute(select(Project).where(Project.thread_id == thread.id))).scalar_one_or_none()
+        if p is None:
+            return {"ok": False, "detail": "這個對話不是研究專案"}
+        if p.status != "interrupted":
+            return {"ok": False, "detail": "目前沒有可續跑的中斷研究"}
+        stage = p.stage
+        run = Run(thread_id=thread.id, status="queued", model="", stage=stage)
+        s.add(run)
+        await s.flush()
+        p.status = "running"
+        rid = run.id
+        await s.commit()
+    await events.enqueue_run(str(rid))
+    return {"ok": True, "stage": stage, "status": "running", "run_id": str(rid)}
+
+
 async def answer_clarification(thread, answers: str) -> dict:
     """Resume from the clarification gate: inject the user's answers and re-run the clarifier."""
     async with SessionLocal() as s:

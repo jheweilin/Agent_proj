@@ -84,9 +84,9 @@ export function StageTracker({ project, live, onJump }: { project: Project; live
 
 type EditStep = { title: string; detail: string; source: string; enabled: boolean };
 
-export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer }: {
+export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer, onResume }: {
   project: Project; busy: boolean; onApprove: (planSteps?: PlanStep[], planTools?: PlanTool[]) => void;
-  onReject: (fb: string) => void; onAnswer: (answers: string) => void;
+  onReject: (fb: string) => void; onAnswer: (answers: string) => void; onResume: () => void;
 }) {
   const [rejecting, setRejecting] = useState(false);
   const [fb, setFb] = useState("");
@@ -96,6 +96,8 @@ export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer }: {
   const clarify = project.status === "awaiting_clarification";
   const plan = project.status === "awaiting_plan_approval";
   const accept = project.status === "awaiting_acceptance";
+  const interrupted = project.status === "interrupted";
+  const stageLabel = project.stages?.find((s) => s.name === project.stage)?.label || project.stage;
   const incoming = project.plan_steps;
   const incomingTools = project.plan_tools;
   // sync the editable checklist when the planner's recorded steps arrive / change
@@ -107,6 +109,22 @@ export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer }: {
   useEffect(() => {
     setTools((incomingTools || []).map((t) => ({ name: t.name || "", why: t.why || "", enabled: t.enabled !== false })));
   }, [JSON.stringify(incomingTools || [])]);
+  if (interrupted) {
+    return (
+      <div className="approve interrupted">
+        <div className="approve-head">
+          <span className="approve-icon warn">⏸</span>
+          <div>
+            <strong>研究已中斷</strong>
+            <div className="approve-sub muted small">在「{stageLabel}」階段停止或中斷（可能是你按了停止，或遇到錯誤）。可以從這裡接著跑完。</div>
+          </div>
+        </div>
+        <div className="approve-actions">
+          <button className="btn primary" disabled={busy} onClick={onResume}>繼續研究</button>
+        </div>
+      </div>
+    );
+  }
   if (clarify) {
     const qs = project.questions || [];
     return (

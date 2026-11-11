@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import { Attachment, Block, fileUrl, fmtDuration, fmtSize, fmtTokens, modelName, RunInfo, ToolBlock, ToolProgress, zipUrl } from "./api";
+import { Attachment, Block, copyText, fileUrl, fmtDuration, fmtSize, fmtTokens, modelName, RunInfo, ToolBlock, ToolProgress, zipUrl } from "./api";
 import { APP_NAME } from "./brand";
 import { Code } from "./Code";
 import { KbDocResults, meta, parseJSON, ToolBody, toolSummary } from "./tools";
@@ -170,8 +170,9 @@ const EXT_LABEL: Record<string, string> = {
   py: "Python 程式", pdf: "PDF", h5: "HDF5", md: "Markdown", log: "Log", zip: "壓縮檔",
 };
 
-// intermediate files (logs, solver status) are hidden behind a toggle so the main results stand out
-const isSecondaryFile = (f: Attachment) => /\.(log|status)$/i.test(f.name);
+// intermediate / raw files (logs, solver status, raw COMSOL model .mph) are hidden behind a toggle so
+// the actual results — plots, images, CSV — stand out and repeated identical .mph files don't pile up
+const isSecondaryFile = (f: Attachment) => /\.(log|status|mph)$/i.test(f.name);
 
 function AttFile({ f, threadId, onOpenFile }:
   { f: Attachment; threadId: string; onOpenFile: (path: string) => void }) {
@@ -238,7 +239,7 @@ function Attachments({ files, threadId, onOpenFile }:
         <>
           <button className="more-files" onClick={() => setShowSecondary((v) => !v)}>
             <span className="chev">{showSecondary ? "▾" : "▸"}</span>
-            其餘 {secondary.length} 個檔案（log、狀態等）
+            其餘 {secondary.length} 個檔案（log、狀態、COMSOL 模型檔 .mph 等）
           </button>
           {showSecondary && <div className="att-files">{secondary.map((f) => (
             <AttFile key={f.path} f={f} threadId={threadId} onOpenFile={onOpenFile} />
@@ -309,7 +310,7 @@ export function AssistantTurn({ blocks, attachments, threadId, live, run, roleLa
         <span className="avatar">S</span><span className="turn-name">{APP_NAME}</span>
         {roleLabel && <span className="role-chip">{roleLabel}</span>}
         {!live && lastText && (
-          <button className="icon small" title="複製回覆" onClick={() => navigator.clipboard?.writeText(lastText.text)}>複製</button>
+          <button className="icon small" title="複製回覆" onClick={() => copyText(lastText.text)}>複製</button>
         )}
       </div>
       <div className="turn-body">

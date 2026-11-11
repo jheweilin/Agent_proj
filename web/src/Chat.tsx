@@ -1,5 +1,5 @@
 import { DragEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, Attachment, Block, eventsUrl, fmtDuration, fmtTime, fmtTokens, Item, modelName, parsePipe, PlanStep, PlanTool, Project, RunInfo, ToolBlock, Usage } from "./api";
+import { api, Attachment, Block, copyText, eventsUrl, fmtDuration, fmtTime, fmtTokens, Item, modelName, parsePipe, PlanStep, PlanTool, Project, RunInfo, ToolBlock, Usage } from "./api";
 import Panel, { PanelTab } from "./Panel";
 import { ApprovalBar, EvidenceCard, NominateCard, PipelineNote, StageTracker, stageLabels } from "./Pipeline";
 import { AssistantTurn, FileOpenCtx, KbDocOpenCtx, KbDocRef, Markdown } from "./Render";
@@ -29,6 +29,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   const [mode, setMode] = useState<string>("chat");
   const [shared, setShared] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
   const [suggestProject, setSuggestProject] = useState<boolean | null>(null);
   const [dismissPromote, setDismissPromote] = useState(false);
@@ -148,6 +149,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   const approve = (planSteps?: PlanStep[], planTools?: PlanTool[]) => passGate(() => api.approve(threadId, planSteps, planTools));
   const reject = (fb: string) => passGate(() => api.reject(threadId, fb));
   const answerClarify = (answers: string) => passGate(() => api.answerClarify(threadId, answers));
+  const resume = () => passGate(() => api.resume(threadId));
   const promote = () => passGate(() => api.promote(threadId));
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -185,11 +187,29 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
 
   const runById = useMemo(() => Object.fromEntries(runs.map((r) => [r.id, r])), [runs]);
   const shown = activeRun ? items.filter((it) => !(it.kind === "assistant" && it.run_id === activeRun)) : items;
+  // Collapse duplicate images across turns: COMSOL re-runs re-export the same plot (same descriptive
+  // filename, e.g. Tz15_coarse10_i6.png) into different job folders — visually identical, so they pile
+  // up. Dedup by filename (not size — re-runs differ by a few bytes), keeping the first appearance.
+  // Different plots keep distinct names (coarse vs normal, T vs U), so genuinely different figures stay.
+  const dedupAtt: Record<number, Attachment[]> = {};
+  {
+    const seen = new Set<string>();
+    for (const it of shown) {
+      if (it.kind !== "assistant") continue;
+      dedupAtt[it.id] = (it.attachments || []).filter((f) => {
+        if (!f.mime.startsWith("image/")) return true;
+        if (seen.has(f.name)) return false;
+        seen.add(f.name);
+        return true;
+      });
+    }
+  }
   const lastRun = runs[runs.length - 1];
   const liveTokens = (live.usage.input_tokens || 0) + (live.usage.cache_read_input_tokens || 0) + (live.usage.cache_creation_input_tokens || 0);
   const isProject = mode === "project";
   const atGate = isProject && !activeRun && !!project &&
-    (project.status === "awaiting_clarification" || project.status === "awaiting_plan_approval" || project.status === "awaiting_acceptance");
+    (project.status === "awaiting_clarification" || project.status === "awaiting_plan_approval"
+      || project.status === "awaiting_acceptance" || project.status === "interrupted");
   const ann = useMemo(() => (isProject ? stageLabels(shown)
     : { labels: {} as Record<number, string>, stages: {} as Record<number, string> }), [shown, isProject]);
   const jumpToStage = useCallback((stage: string) => {
@@ -230,7 +250,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
                   {shared && (
                     <div className="share-link">
                       <input readOnly value={shareUrl} onFocus={(e) => e.target.select()} />
-                      <button className="btn small" onClick={() => navigator.clipboard?.writeText(shareUrl).catch(() => {})}>複製</button>
+                      <button className="btn small" onClick={async () => { if (await copyText(shareUrl)) { setCopied(true); setTimeout(() => setCopied(false), 1500); } }}>{copied ? "已複製 ✓" : "複製"}</button>
                     </div>
                   )}
                 </div>
@@ -292,7 +312,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
               }
               return (
                 <div key={`a${it.id}`} className="msg assistant" data-stage={ann.stages[it.id]}>
-                  <AssistantTurn blocks={it.blocks} attachments={it.attachments} threadId={threadId} run={runById[it.run_id]}
+                  <AssistantTurn blocks={it.blocks} attachments={dedupAtt[it.id] ?? it.attachments} threadId={threadId} run={runById[it.run_id]}
                     roleLabel={ann.labels[it.id]} selectedId={selected?.id} onSelect={openStep} onOpenFile={openFile} />
                 </div>
               );
@@ -326,7 +346,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
                 </div>
               </div>
             )}
-            {atGate && project && <ApprovalBar project={project} busy={gateBusy} onApprove={approve} onReject={reject} onAnswer={answerClarify} />}
+            {atGate && project && <ApprovalBar project={project} busy={gateBusy} onApprove={approve} onReject={reject} onAnswer={answerClarify} onResume={resume} />}
             {isProject && !activeRun && project?.status === "completed" && <NominateCard project={project} threadId={threadId} />}
             <div ref={bottomRef} />
           </div>

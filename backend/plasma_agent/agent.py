@@ -508,6 +508,13 @@ async def execute_run(run_id: str) -> None:
         db_run.finished_at = utcnow()
         await s.commit()
     await r.delete(busy_key)
+    # a project run that stopped/crashed mid-stage leaves the project 'running' with no active run —
+    # flip it to 'interrupted' so the UI can offer a resume instead of looking stuck
+    if getattr(thread, "mode", "chat") == "project" and status in ("stopped", "failed"):
+        from . import pipeline
+        st = await pipeline.mark_interrupted(thread.id)
+        if st is not None:
+            await runner.publish({"type": "project", "stage": st, "status": "interrupted"})
     await runner.publish({"type": "run_end", "status": status, "usage": runner.usage})
 
 

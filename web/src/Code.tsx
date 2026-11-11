@@ -9,6 +9,7 @@ import python from "highlight.js/lib/languages/python";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 import { memo, useMemo, useState } from "react";
+import { copyText } from "./api";
 
 hljs.registerLanguage("bash", bash);
 hljs.registerLanguage("cpp", cpp);
@@ -35,6 +36,7 @@ export function langFromPath(path?: string): string | undefined {
 export const Code = memo(function Code({ code, lang, maxLines, className = "", wrap = false }:
   { code: string; lang?: string; maxLines?: number; className?: string; wrap?: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
   const lines = code.split("\n");
   const limited = !!maxLines && !expanded && lines.length > maxLines;
   const shown = limited ? lines.slice(0, maxLines).join("\n") : code;
@@ -47,7 +49,8 @@ export const Code = memo(function Code({ code, lang, maxLines, className = "", w
   }, [shown, lang]);
   return (
     <div className={`code ${className}`}>
-      <button className="code-copy" onClick={() => navigator.clipboard?.writeText(code)} title="複製">複製</button>
+      <button className="code-copy" title="複製"
+              onClick={async () => { if (await copyText(code)) { setCopied(true); setTimeout(() => setCopied(false), 1500); } }}>{copied ? "已複製 ✓" : "複製"}</button>
       {html !== null
         ? <pre className={wrap ? "wrap" : ""}><code className="hljs" dangerouslySetInnerHTML={{ __html: html }} /></pre>
         : <pre className={wrap ? "wrap" : ""}><code>{shown}</code></pre>}

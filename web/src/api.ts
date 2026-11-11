@@ -1,3 +1,19 @@
+// Copy text to the clipboard. navigator.clipboard only exists on secure origins (HTTPS/localhost);
+// this site is served over plain HTTP, so fall back to a temporary <textarea> + execCommand('copy').
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* fall through to the legacy path */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.top = "-1000px"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch { return false; }
+}
+
 export type User = { id: string; email: string; name: string; is_admin: boolean; is_faculty: boolean };
 export type DomainChoice = { name: string; label: string };
 export type ModelChoice = { id: string; label: string };
@@ -156,6 +172,8 @@ export const api = {
     req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/reject`, { feedback }),
   answerClarify: (id: string, answers: string) =>
     req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/clarify`, { answers }),
+  resume: (id: string) =>
+    req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/resume`),
   toolDetail: (id: string, toolId: string) => req<ToolDetail>("GET", `/api/threads/${id}/tools/${toolId}`),
   shareThread: (id: string, shared: boolean) =>
     req<{ ok: boolean; shared: boolean }>("POST", `/api/threads/${id}/share`, { shared }),

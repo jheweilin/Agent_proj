@@ -1,5 +1,5 @@
 import { DragEvent, useCallback, useEffect, useRef, useState } from "react";
-import { api, Grant, KbDoc, Lab, User } from "./api";
+import { api, copyText, Grant, KbDoc, Lab, User } from "./api";
 import KbDocList from "./KbDocList";
 
 const IcTrash = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -248,7 +248,7 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
                             data-tip="把這組加入碼給你的學生／成員，他們在頂部「實驗室庫 → 建立／加入」輸入即可加入本實驗室。按「重置」會讓舊碼立即失效。">加入碼 ⓘ</span>
                       <code className="join-code">{lab.join_code}</code>
                       <button className="btn small hint" data-tip="複製加入碼" disabled={busy}
-                              onClick={() => navigator.clipboard?.writeText(lab.join_code || "").catch(() => {})}>複製</button>
+                              onClick={() => copyText(lab.join_code || "")}>複製</button>
                       <button className="btn small hint" data-tip="產生新的加入碼，舊碼立即失效" disabled={busy} onClick={regen}>重置</button>
                     </span>
                   </div>
