@@ -202,7 +202,11 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
             )}
 
             {section === "members" && lab && (<>
-              <div className="lab-sec-title">成員{lab.member_count != null && <span className="muted small"> · {lab.member_count} 人</span>}</div>
+              <div className="lab-sec-head">
+                <div className="lab-sec-title">成員{lab.member_count != null && <span className="muted small"> · {lab.member_count} 人</span>}</div>
+                {(lab.members?.length ?? 0) > 1 &&
+                  <input className="search kb-search" placeholder="搜尋成員…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />}
+              </div>
               {isOwner && (
                 <div className="lab-code">
                   <span className="muted small">加入碼</span>
@@ -211,9 +215,6 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
                           onClick={() => navigator.clipboard?.writeText(lab.join_code || "").catch(() => {})}>複製</button>
                   <button className="btn small" disabled={busy} onClick={regen}>重置</button>
                 </div>
-              )}
-              {(lab.members?.length ?? 0) > 1 && (
-                <input className="search sec-search" placeholder="搜尋成員（姓名、Email）…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />
               )}
               <div className="kb-list">
                 {(lab.members || [])
@@ -241,11 +242,12 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
             </>)}
 
             {section === "pending" && isOwner && (<>
-              <div className="lab-sec-title">待審納入 <span className="muted small"> · 成員提名、你核准後才進庫並可被檢索</span></div>
+              <div className="lab-sec-head">
+                <div className="lab-sec-title">待審納入 <span className="muted small"> · 成員提名、你核准後才進庫並可被檢索</span></div>
+                {pendingN > 1 &&
+                  <input className="search kb-search" placeholder="搜尋待審…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />}
+              </div>
               {pendingN === 0 && <div className="muted small pad">目前沒有待審的研究經驗。</div>}
-              {pendingN > 1 && (
-                <input className="search sec-search" placeholder="搜尋待審（標題、提名人）…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />
-              )}
               <div className="kb-list">
                 {pending
                   .filter((d) => !secQ.trim() || [d.source, d.submitted_by_name].some((x) => (x || "").toLowerCase().includes(secQ.trim().toLowerCase())))
@@ -267,12 +269,13 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
             </>)}
 
             {section === "grants" && isOwner && (<>
-              <div className="lab-sec-title">跨實驗室授權 <span className="muted small"> · 別的實驗室申請存取、以及你送出的申請</span></div>
+              <div className="lab-sec-head">
+                <div className="lab-sec-title">跨實驗室授權 <span className="muted small"> · 別的實驗室申請存取、以及你送出的申請</span></div>
+                {grants.incoming.length + grants.outgoing.length > 1 &&
+                  <input className="search kb-search" placeholder="搜尋授權…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />}
+              </div>
               {grants.incoming.length === 0 && grants.outgoing.length === 0 &&
                 <div className="muted small pad">還沒有任何跨實驗室授權往來。到「名錄」可申請存取別的實驗室。</div>}
-              {grants.incoming.length + grants.outgoing.length > 1 && (
-                <input className="search sec-search" placeholder="搜尋授權（實驗室名稱、說明）…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />
-              )}
               <div className="kb-list">
                 {grants.incoming
                   .filter((g) => !secQ.trim() || [g.grantee_name, g.note].some((x) => (x || "").toLowerCase().includes(secQ.trim().toLowerCase())))

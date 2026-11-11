@@ -510,9 +510,10 @@ async def mark_nomination(thread_id, lab_id, lab_name: str, status: str, **extra
     await _set_card(thread_id, nomination={"lab_id": str(lab_id), "lab_name": lab_name, "status": status, **extra})
 
 
-async def nominate_experience(thread_id, user_id, lab_id, lab_name: str = "") -> None:
-    """Generate the experience note and ingest it into the lab KB as pending (awaiting owner review).
-    Heavy (LLM + embedding) and needs Bedrock creds — runs in the worker (see events.NOMINATE_KEY)."""
+async def nominate_experience(thread_id, user_id, lab_id, lab_name: str = "", approved: bool = False) -> None:
+    """Generate the experience note and ingest it into the lab KB. Members' nominations land as
+    pending (awaiting owner review, 閘門①); the lab owner's own project is approved straight away
+    (no self-review). Heavy (LLM + embedding), needs Bedrock creds — runs in the worker."""
     try:
         async with SessionLocal() as s:
             thread = await s.get(Thread, uuid.UUID(str(thread_id)))
@@ -522,9 +523,10 @@ async def nominate_experience(thread_id, user_id, lab_id, lab_name: str = "") ->
         title, body = await build_experience_doc(thread, card)
         dsid = await kb.lab_dataset_id(lab_id, name=lab_name)
         source = f"研究經驗：{title}"
-        res = await kb.ingest(dsid, source, body, origin="research", kind="experience", status="pending",
+        status = "approved" if approved else "pending"
+        res = await kb.ingest(dsid, source, body, origin="research", kind="experience", status=status,
                               source_thread_id=thread.id, submitted_by=uuid.UUID(str(user_id)))
-        await mark_nomination(thread.id, lab_id, lab_name, "pending", source=source, doc_id=res.get("id"))
+        await mark_nomination(thread.id, lab_id, lab_name, status, source=source, doc_id=res.get("id"))
     except Exception as e:
         log.exception("nominate_experience failed: %s", e)
         await mark_nomination(thread_id, lab_id, lab_name, "error", detail=str(e)[:300])

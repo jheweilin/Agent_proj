@@ -63,8 +63,8 @@ export default function KbDocList({ docs, canManage, enabled, onDelete, onChange
             <div className="kbfile-row">
               <span className="kbfile-icon">{icon(d)}</span>
               <div className="kbfile-main">
-                <div className="kbfile-name" title={d.source}>
-                  {d.title || d.source}
+                <div className="kbfile-name" title={d.title || d.source}>
+                  <span className="kbfile-title">{d.title || d.source}</span>
                   {d.kind === "experience" && <span className="kb-badge">研究經驗</span>}
                 </div>
                 <div className="kbfile-meta muted small">

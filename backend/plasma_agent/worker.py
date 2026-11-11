@@ -110,7 +110,8 @@ async def main() -> None:
                 async with sem:
                     try:
                         p = _json.loads(payload)
-                        await pipeline.nominate_experience(p["thread_id"], p["user_id"], p["lab_id"], p.get("lab_name", ""))
+                        await pipeline.nominate_experience(p["thread_id"], p["user_id"], p["lab_id"], p.get("lab_name", ""),
+                                                           approved=bool(p.get("auto_approve")))
                     except Exception:
                         log.exception("nomination failed")
             nt = asyncio.create_task(nominate(value))

@@ -187,7 +187,7 @@ export const api = {
   labKbDelete: (id: string, docId: string) => req<{ ok: boolean }>("DELETE", `/api/labs/${id}/kb/documents/${docId}`),
   // knowledge flywheel: nominate a finished project → lab KB (pending); owner reviews the queue
   nominate: (threadId: string, labId: string) =>
-    req<{ ok: boolean; status: string; lab_id: string; lab_name: string }>("POST", `/api/threads/${threadId}/nominate`, { lab_id: labId }),
+    req<{ ok: boolean; status: string; lab_id: string; lab_name: string; auto_approve: boolean }>("POST", `/api/threads/${threadId}/nominate`, { lab_id: labId }),
   labKbPending: (id: string) => req<{ enabled: boolean; documents: KbDoc[] }>("GET", `/api/labs/${id}/kb/pending`),
   labKbReview: (id: string, docId: string, action: "approve" | "reject") =>
     req<{ ok: boolean }>("POST", `/api/labs/${id}/kb/pending/${docId}/${action}`),

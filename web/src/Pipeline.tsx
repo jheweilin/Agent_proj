@@ -192,6 +192,7 @@ export function NominateCard({ project, threadId }: { project: Project; threadId
   const [sel, setSel] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+  const [doneAuto, setDoneAuto] = useState(false);  // optimistic: owner's nomination auto-approves
   const [err, setErr] = useState("");
   const dismissKey = `pa:nominate-dismissed:${threadId}`;
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(dismissKey) === "1");
@@ -206,31 +207,36 @@ export function NominateCard({ project, threadId }: { project: Project; threadId
 
   if (nom || done) {
     const name = nom?.lab_name || labs.find((l) => l.id === done)?.name || "";
-    const status = nom?.status || "pending";
+    const status = nom?.status || (doneAuto ? "approved" : "pending");
     return (
       <div className="nominate done">
         {status === "error"
           ? <span className="muted small">提名失敗：{nom?.detail || "請稍後再試"}</span>
           : status === "generating"
-          ? <span className="muted small">正在整理研究經驗筆記並提名至<strong>{name}</strong>…</span>
-          : <span className="muted small">✓ 已提名納入<strong>{name}</strong>
-              {status === "pending" ? "，待負責人審核後納入實驗室庫。" : "。"}</span>}
+          ? <span className="muted small">正在整理研究經驗筆記並納入<strong>{name}</strong>…</span>
+          : status === "pending"
+          ? <span className="muted small">✓ 已提名納入<strong>{name}</strong>，待負責人審核後納入實驗室庫。</span>
+          : <span className="muted small">✓ 已納入<strong>{name}</strong>實驗室庫，立即可被檢索。</span>}
       </div>
     );
   }
   const go = () => {
     if (!sel) return;
     setBusy(true); setErr("");
-    api.nominate(threadId, sel).then((r) => setDone(r.lab_id))
+    api.nominate(threadId, sel).then((r) => { setDone(r.lab_id); setDoneAuto(r.auto_approve); })
       .catch((e) => setErr(e.message)).finally(() => setBusy(false));
   };
   const skip = () => { localStorage.setItem(dismissKey, "1"); setDismissed(true); };
+  const selLab = labs.find((l) => l.id === sel);
+  const isOwnerOfSel = selLab?.role === "owner";
   return (
     <div className="nominate">
       <button className="nominate-close" onClick={skip} title="略過，不提名" aria-label="略過">×</button>
       <div className="nominate-head">
         <strong>把這次研究納入實驗室知識庫？</strong>
-        <div className="muted small">會整理成一篇「研究經驗」筆記（方法＋踩坑），送交實驗室負責人審核；通過後，同實驗室的新成員聊天就查得到。</div>
+        <div className="muted small">會整理成一篇「研究經驗」筆記（方法＋踩坑）。{isOwnerOfSel
+          ? "你是這個實驗室的負責人，會直接納入、立即可被同實驗室成員查到。"
+          : "送交實驗室負責人審核；通過後，同實驗室的成員聊天就查得到。"}</div>
       </div>
       {labs.length === 0 ? (
         <span className="muted small">你還沒有加入任何實驗室——加入後即可提名。</span>
@@ -238,11 +244,11 @@ export function NominateCard({ project, threadId }: { project: Project; threadId
         <div className="nominate-actions">
           {labs.length > 1 && (
             <select value={sel} onChange={(e) => setSel(e.target.value)} disabled={busy}>
-              {labs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              {labs.map((l) => <option key={l.id} value={l.id}>{l.name}{l.role === "owner" ? "（我的實驗室）" : ""}</option>)}
             </select>
           )}
           <button className="btn primary small" disabled={busy || !sel} onClick={go}>
-            {busy ? "提名中…" : labs.length > 1 ? "提名到所選實驗室" : `提名到「${labs[0].name}」`}
+            {busy ? "處理中…" : isOwnerOfSel ? "納入我的實驗室庫" : labs.length > 1 ? "提名到所選實驗室" : `提名到「${labs[0].name}」`}
           </button>
           <button className="btn small" disabled={busy} onClick={skip}>略過</button>
         </div>

@@ -569,11 +569,13 @@ async def nominate(thread_id: str, body: NominateIn,
     p = await pipeline.gate_status(t.id)
     if p is None or p.status != "completed":
         raise HTTPException(400, "只有已完成（通過驗收）的研究專案可以提名納入實驗室庫")
-    lab, _ = await _membership(body.lab_id, user, s)   # 404 if the user isn't a member of that lab
+    lab, m = await _membership(body.lab_id, user, s)   # 404 if the user isn't a member of that lab
+    # the owner's own project needs no self-review: it goes straight in; members' go to 待審 (閘門①)
+    auto = m.role == "owner"
     await pipeline.mark_nomination(t.id, lab.id, lab.name, "generating")
     await events.enqueue_nomination({"thread_id": str(t.id), "user_id": str(user.id),
-                                     "lab_id": str(lab.id), "lab_name": lab.name})
-    return {"ok": True, "status": "generating", "lab_id": str(lab.id), "lab_name": lab.name}
+                                     "lab_id": str(lab.id), "lab_name": lab.name, "auto_approve": auto})
+    return {"ok": True, "status": "generating", "lab_id": str(lab.id), "lab_name": lab.name, "auto_approve": auto}
 
 
 @app.get("/api/runs/{run_id}/events")
