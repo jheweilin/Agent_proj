@@ -820,6 +820,7 @@ async def kb_doc_text(doc_id: str, user: User = Depends(current_user), s: AsyncS
 class DocMetaIn(BaseModel):
     title: str | None = Field(default=None, max_length=600)
     tags: list[str] | None = None
+    confidential: bool | None = None
 
 
 @app.patch("/api/kb/documents/{doc_id}")
@@ -828,7 +829,8 @@ async def kb_doc_edit(doc_id: str, body: DocMetaIn, user: User = Depends(current
     doc, can = await _kb_doc_access(doc_id, user, s)
     if not can:
         raise HTTPException(403, "沒有編輯這份文件的權限")
-    await kb.set_document_meta(doc_id, doc.dataset_id, title=body.title, tags=body.tags)
+    await kb.set_document_meta(doc_id, doc.dataset_id, title=body.title, tags=body.tags,
+                              confidential=body.confidential)
     return {"ok": True}
 
 
@@ -1238,6 +1240,20 @@ async def act_grant(grant_id: str, action: str, body: GrantApproveIn | None = No
         g.status = "rejected" if action == "reject" else "revoked"
     await s.commit()
     return {"ok": True, "status": g.status}
+
+
+@app.get("/api/grants/{grant_id}/suggest")
+async def suggest_grant_scope(grant_id: str, user: User = Depends(current_user),
+                              s: AsyncSession = Depends(get_session)):
+    """Pre-select relevant documents + tags for approving a grant, ranked by the applicant's stated
+    purpose (grant.note), so the grantor's owner reviews instead of ticking files one by one (L3 phase 2)."""
+    g = await s.get(KbGrant, uuid.UUID(grant_id)) if _is_uuid(grant_id) else None
+    if g is None:
+        raise HTTPException(404, "找不到授權")
+    await _owner_lab(str(g.grantor_lab_id), user, s)  # only the grantor's owner may peek
+    ds = await kb.lab_dataset_id(g.grantor_lab_id)
+    sug = await kb.suggest_grant(ds, g.note or "")
+    return {"query": g.note or "", **sug}
 
 
 # ------------------------------------------------------------------ web UI

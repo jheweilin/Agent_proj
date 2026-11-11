@@ -617,6 +617,9 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
 .kbprev-img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .kbfile-text { white-space: pre-wrap; word-break: break-word; max-height: 420px; overflow: auto; margin-top: 8px; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; line-height: 1.6; }
 .kb-badge { flex: none; font-size: 10.5px; font-weight: 600; color: var(--ok); background: var(--ok-soft); padding: 0 7px; border-radius: 999px; line-height: 1.8; }
+.kb-badge.lock { color: var(--run); background: var(--run-soft); }
+.conf-toggle { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; margin-top: 4px; cursor: pointer; }
+.conf-toggle input { margin-top: 3px; flex: none; }
 /* Shared request/review card with a semantic left bar — used by 待審納入 + 跨實驗室授權.
    amber = awaiting your action, green = granted, grey = informational (rejected / outgoing). */
 .lab-card { background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--run); border-radius: 8px; padding: 9px 11px; margin-bottom: 6px; }
@@ -704,6 +707,8 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
 .grant-status.granted { color: var(--ok); background: var(--ok-soft); }
 .grant-status.rejected, .grant-status.revoked { color: var(--text-2); background: var(--border-2); }
 .grant-approve { display: flex; flex-direction: column; gap: 8px; padding: 2px 2px 12px; }
+.grant-hint { font-size: 12.5px; line-height: 1.5; color: var(--text-2); background: var(--accent-soft); border-radius: 8px; padding: 7px 10px; }
+.grant-sugtag { flex: none; font-size: 10.5px; font-weight: 600; color: var(--accent); background: var(--accent-soft); padding: 0 7px; border-radius: 999px; line-height: 1.8; }
 .grant-scopes { display: flex; gap: 14px; font-size: 13px; }
 .grant-scopes label, .grant-doc { display: flex; align-items: center; gap: 6px; }
 .grant-docs { display: flex; flex-direction: column; gap: 5px; max-height: 160px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; }

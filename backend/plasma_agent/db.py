@@ -200,6 +200,9 @@ class KbDocument(Base):
     source_thread_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)  # back-link to origin project
     submitted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)       # nominator
     tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")    # topic tags (L3 grants)
+    # confidential (不外流): excluded from cross-lab "整庫 full" and "主題 tags" grants; own-lab members
+    # still see it, and an explicit per-document grant still honours it. Default shareable.
+    confidential: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     # original-file retention (base/lab KB): keep the uploaded file so it can be previewed/downloaded
     title: Mapped[str] = mapped_column(String(600), nullable=False, default="", server_default="")   # editable display name
     file_path: Mapped[str] = mapped_column(String(1000), nullable=False, default="", server_default="")  # stored original (under workspaces/_kb)
@@ -267,6 +270,8 @@ async def init_db() -> None:
             "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS submitted_by UUID")
         await conn.exec_driver_sql(
             "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb")
+        await conn.exec_driver_sql(
+            "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS confidential BOOLEAN NOT NULL DEFAULT false")
         await conn.exec_driver_sql("ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS title VARCHAR(600) NOT NULL DEFAULT ''")
         await conn.exec_driver_sql("ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS file_path VARCHAR(1000) NOT NULL DEFAULT ''")
         await conn.exec_driver_sql("ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS byte_size BIGINT NOT NULL DEFAULT 0")

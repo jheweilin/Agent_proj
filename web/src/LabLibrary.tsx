@@ -35,6 +35,8 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
   const [aScope, setAScope] = useState<"full" | "documents" | "tags">("full");
   const [aDocs, setADocs] = useState<Set<string>>(new Set());
   const [aTags, setATags] = useState("");
+  const [aSuggest, setASuggest] = useState<{ query: string; documents: { id: string; title: string; score: number }[]; tags: string[] } | null>(null);
+  const [aLoading, setALoading] = useState(false);
   const [section, setSection] = useState("files");   // which left-rail section is shown
   const [secQ, setSecQ] = useState("");              // per-section search box (members/pending/grants)
 
@@ -127,7 +129,16 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
   });
   const adoptDraft = (summary: string, keywords: string[]) => { setPSummary(summary); setPKeywords(keywords.join("、")); };
 
-  const openApprove = (gid: string) => { setApproveFor(gid); setAScope("full"); setADocs(new Set()); setATags(""); };
+  const openApprove = async (gid: string) => {
+    setApproveFor(gid); setAScope("full"); setADocs(new Set()); setATags(""); setASuggest(null); setALoading(true);
+    try {
+      const sg = await api.grantSuggest(gid);
+      setASuggest(sg);
+      if (sg.documents.length) { setAScope("documents"); setADocs(new Set(sg.documents.map((d) => d.id))); }
+      if (sg.tags.length) setATags(sg.tags.join("、"));
+    } catch { /* suggestion is best-effort; owner can still pick manually */ }
+    finally { setALoading(false); }
+  };
   const doApprove = (gid: string) => sel && guard(async () => {
     const ref = aScope === "documents" ? Array.from(aDocs) : aScope === "tags" ? splitKw(aTags) : [];
     await api.actGrant(gid, "approve", { scope: aScope, scope_ref: ref });
@@ -203,7 +214,7 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
                   {docs.length > 1 && <input className="search kb-search" placeholder="搜尋文件…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />}
                 </div>
                 <KbDocList docs={docs} canManage={enabled} enabled={enabled} onDelete={delDoc}
-                           query={secQ} onChanged={() => sel && loadDetail(sel)} />
+                           query={secQ} allowConfidential onChanged={() => sel && loadDetail(sel)} />
               </div>
             )}
 
@@ -312,6 +323,13 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
                     </div>
                     {approveFor === g.id && (
                       <div className="grant-approve">
+                        {aLoading
+                          ? <div className="muted small">正在依申請目的挑選相關文件…</div>
+                          : aSuggest && (aSuggest.documents.length || aSuggest.tags.length)
+                            ? <div className="grant-hint">✨ 已依申請目的{aSuggest.query ? `「${aSuggest.query}」` : ""}自動挑選{aSuggest.documents.length ? ` ${aSuggest.documents.length} 份相關文件` : ""}{aSuggest.tags.length ? `、${aSuggest.tags.length} 個主題標籤` : ""}，可自行增減。<span className="muted">（🔒 不外流的文件不會被挑選）</span></div>
+                            : aSuggest
+                              ? <div className="muted small">沒找到明顯相關的文件；請自行選擇授權範圍。</div>
+                              : null}
                         <div className="grant-scopes">
                           {(["full", "documents", "tags"] as const).map((sc) => (
                             <label key={sc}><input type="radio" checked={aScope === sc} onChange={() => setAScope(sc)} /> {SCOPE_LABEL[sc]}</label>
@@ -320,13 +338,17 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
                         {aScope === "documents" && (
                           <div className="grant-docs">
                             {docs.length === 0 && <span className="muted small">這個庫還沒有文件。</span>}
-                            {docs.map((d) => (
+                            {docs.map((d) => {
+                              const suggested = !!aSuggest?.documents.some((x) => x.id === d.id);
+                              return (
                               <label key={d.id} className="grant-doc">
                                 <input type="checkbox" checked={aDocs.has(d.id)} onChange={(e) =>
                                   setADocs((s) => { const n = new Set(s); e.target.checked ? n.add(d.id) : n.delete(d.id); return n; })} />
                                 <span className="kb-name">{d.title || d.source}</span>
+                                {suggested && <span className="grant-sugtag">建議</span>}
+                                {d.confidential && <span className="kb-badge lock">🔒</span>}
                               </label>
-                            ))}
+                            );})}
                           </div>
                         )}
                         {aScope === "tags" && (

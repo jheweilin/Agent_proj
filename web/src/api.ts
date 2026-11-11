@@ -68,6 +68,7 @@ export type KbDoc = {
   id: string; source: string; chunks: number; created_at: string;
   // knowledge-flywheel metadata (lab KB); defaults upload/reference/approved for plain uploads
   origin?: string; kind?: string; status?: string; tags?: string[];
+  confidential?: boolean;   // 不外流：排除於跨域「整庫／主題」授權
   source_thread_id?: string | null; submitted_by?: string | null; submitted_by_name?: string;
   // retained original file (base/lab KB)
   title?: string; size?: number; mime?: string; has_file?: boolean;
@@ -205,9 +206,12 @@ export const api = {
   labGrants: (id: string) => req<{ incoming: Grant[]; outgoing: Grant[] }>("GET", `/api/labs/${id}/grants`),
   actGrant: (grantId: string, action: "approve" | "reject" | "revoke", body?: { scope: string; scope_ref: string[] }) =>
     req<{ ok: boolean; status: string }>("POST", `/api/grants/${grantId}/${action}`, body),
+  grantSuggest: (grantId: string) =>
+    req<{ query: string; documents: { id: string; title: string; score: number }[]; tags: string[] }>(
+      "GET", `/api/grants/${grantId}/suggest`),
   // unified KB document view / manage (original file retained for base + lab uploads)
   kbDocText: (docId: string) => req<{ text: string; source: string }>("GET", `/api/kb/documents/${docId}/text`),
-  kbDocEdit: (docId: string, body: { title?: string; tags?: string[] }) =>
+  kbDocEdit: (docId: string, body: { title?: string; tags?: string[]; confidential?: boolean }) =>
     req<{ ok: boolean }>("PATCH", `/api/kb/documents/${docId}`, body),
   kbDocReplace: (docId: string, file: File) => {
     const fd = new FormData(); fd.append("file", file);

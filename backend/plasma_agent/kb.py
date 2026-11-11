@@ -210,7 +210,8 @@ async def visible_scope(thread_id) -> dict:
     """Everything a thread may retrieve (L3): its own task + base + its owner's labs (via
     datasets_for_thread), PLUS cross-lab grants to those labs — whole dataset (full), specific
     documents, or documents carrying granted tags. Nothing is copied; this just widens the filter."""
-    datasets = list(await datasets_for_thread(thread_id))
+    datasets = list(await datasets_for_thread(thread_id))   # own: task + base + own labs (sees 不外流)
+    grant_datasets: list = []                               # cross-lab 整庫 grants (excludes 不外流)
     doc_ids: list = []
     tag_filters: list = []
     async with SessionLocal() as s:
@@ -226,34 +227,41 @@ async def visible_scope(thread_id) -> dict:
                 if ds is None:
                     continue
                 if g.scope == "full":
-                    datasets.append(ds)
+                    grant_datasets.append(ds)
                 elif g.scope == "documents":
                     doc_ids += [u for u in (_as_uuid(x) for x in (g.scope_ref or [])) if u]
                 elif g.scope == "tags":
                     tags = [t for t in (g.scope_ref or []) if t]
                     if tags:
                         tag_filters.append((ds, tags))
-    return {"datasets": list(dict.fromkeys(datasets)), "doc_ids": doc_ids, "tag_filters": tag_filters}
+    return {"datasets": list(dict.fromkeys(datasets)), "grant_datasets": list(dict.fromkeys(grant_datasets)),
+            "doc_ids": doc_ids, "tag_filters": tag_filters}
 
 
 def _norm_scope(scope) -> dict:
     """Accept either a flat dataset-id list (back-compat) or a full scope dict."""
     if isinstance(scope, dict):
-        return {"datasets": scope.get("datasets") or [], "doc_ids": scope.get("doc_ids") or [],
-                "tag_filters": scope.get("tag_filters") or []}
-    return {"datasets": list(scope or []), "doc_ids": [], "tag_filters": []}
+        return {"datasets": scope.get("datasets") or [], "grant_datasets": scope.get("grant_datasets") or [],
+                "doc_ids": scope.get("doc_ids") or [], "tag_filters": scope.get("tag_filters") or []}
+    return {"datasets": list(scope or []), "grant_datasets": [], "doc_ids": [], "tag_filters": []}
 
 
 def _scope_clause(scope: dict, doc_model=False):
-    """OR of the reachable-chunk conditions. doc_model=True builds it on KbDocument (for read)."""
+    """OR of the reachable-chunk conditions. doc_model=True builds it on KbDocument (for read).
+    `datasets` are the thread's own reach (task/base/own labs) — 不外流 docs stay visible there.
+    `grant_datasets` (cross-lab 整庫) and `tag_filters` (cross-lab 主題) exclude confidential docs;
+    an explicit `doc_ids` grant is an intentional per-document share and is honoured regardless."""
     ds_col = KbDocument.dataset_id if doc_model else KbChunk.dataset_id
+    shareable = KbDocument.confidential.is_(False)
     conds = []
     if scope["datasets"]:
         conds.append(ds_col.in_(scope["datasets"]))
+    if scope.get("grant_datasets"):
+        conds.append(and_(ds_col.in_(scope["grant_datasets"]), shareable))
     if scope["doc_ids"]:
         conds.append((KbDocument.id if doc_model else KbChunk.document_id).in_(scope["doc_ids"]))
     for ds_id, tags in scope["tag_filters"]:
-        conds.append(and_(ds_col == ds_id, KbDocument.tags.op("?|")(array(tags))))
+        conds.append(and_(ds_col == ds_id, KbDocument.tags.op("?|")(array(tags)), shareable))
     return or_(*conds) if conds else None
 
 
@@ -354,6 +362,7 @@ async def list_documents(dataset_id, status: str | None = "approved") -> list[di
         rows = (await s.execute(q.order_by(KbDocument.created_at.desc()))).scalars().all()
     return [{"id": str(d.id), "source": d.source, "title": d.title or d.source, "chunks": d.n_chunks,
              "origin": d.origin, "kind": d.kind, "status": d.status, "tags": d.tags or [],
+             "confidential": bool(d.confidential),
              "size": d.byte_size, "mime": d.mime, "has_file": bool(d.file_path),
              "source_thread_id": str(d.source_thread_id) if d.source_thread_id else None,
              "submitted_by": str(d.submitted_by) if d.submitted_by else None,
@@ -377,8 +386,8 @@ async def document_text(doc_id: str, max_chars: int = 200000) -> str:
     return body if len(body) <= max_chars else body[:max_chars] + "\n…（截斷）"
 
 
-async def set_document_meta(doc_id: str, dataset_id, *, title=None, tags=None) -> bool:
-    """Edit a document's display title and/or topic tags. Scoped to dataset_id."""
+async def set_document_meta(doc_id: str, dataset_id, *, title=None, tags=None, confidential=None) -> bool:
+    """Edit a document's display title, topic tags and/or 不外流 flag. Scoped to dataset_id."""
     async with SessionLocal() as s:
         try:
             d = await s.get(KbDocument, uuid.UUID(doc_id))
@@ -390,8 +399,40 @@ async def set_document_meta(doc_id: str, dataset_id, *, title=None, tags=None) -
             d.title = title.strip()[:600]
         if tags is not None:
             d.tags = [t.strip() for t in tags if t.strip()][:12]
+        if confidential is not None:
+            d.confidential = bool(confidential)
         await s.commit()
     return True
+
+
+async def suggest_grant(dataset_id, query: str, top_k: int = 6) -> dict:
+    """Pre-selection for approving a cross-lab grant (L3 phase 2): rank a lab's own approved,
+    shareable (非不外流) documents by relevance to the applicant's stated purpose, so the owner
+    reviews a ready-made selection instead of ticking files one by one. Returns {documents, tags}.
+    Voyage embedding runs here (api has the key); 不外流 docs are never suggested."""
+    if not query.strip() or not enabled():
+        return {"documents": [], "tags": []}
+    try:
+        qv = (await embed([query], "query"))[0]
+    except Exception:
+        return {"documents": [], "tags": []}
+    d = func.min(KbChunk.embedding.cosine_distance(qv)).label("d")
+    async with SessionLocal() as s:
+        rows = (await s.execute(
+            select(KbDocument.id, KbDocument.title, KbDocument.source, KbDocument.tags, d)
+            .join(KbChunk, KbChunk.document_id == KbDocument.id)
+            .where(KbDocument.dataset_id == dataset_id, KbDocument.status == "approved",
+                   KbDocument.confidential.is_(False))
+            .group_by(KbDocument.id).order_by(d).limit(top_k))).all()
+    # keep only clearly-relevant docs (cosine distance < 0.72 ≈ score > 0.28)
+    picked = [r for r in rows if float(r[4]) < 0.72]
+    docs = [{"id": str(r[0]), "title": r[1] or r[2], "score": round(1 - float(r[4]), 3)} for r in picked]
+    counts: dict[str, int] = {}
+    for r in picked:
+        for t in (r[3] or []):
+            counts[t] = counts.get(t, 0) + 1
+    tags = sorted(counts, key=lambda t: -counts[t])[:8]
+    return {"documents": docs, "tags": tags}
 
 
 async def set_document_tags(doc_id: str, dataset_id, tags: list[str]) -> bool:

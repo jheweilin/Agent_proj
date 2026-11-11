@@ -26,9 +26,10 @@ function icon(doc: KbDoc): string {
   return "📎";
 }
 
-export default function KbDocList({ docs, canManage, enabled, onDelete, onChanged, query }: {
+export default function KbDocList({ docs, canManage, enabled, onDelete, onChanged, query, allowConfidential }: {
   docs: KbDoc[]; canManage: boolean; enabled: boolean;
   onDelete: (doc: KbDoc) => void; onChanged: () => void; query?: string;
+  allowConfidential?: boolean;   // lab libraries: offer a 不外流 toggle (excludes doc from cross-lab grants)
 }) {
   const [preview, setPreview] = useState<KbDoc | null>(null);    // doc whose original is previewed in the lightbox
   const [textFor, setTextFor] = useState<string | null>(null);   // docId whose extracted text is shown
@@ -36,6 +37,7 @@ export default function KbDocList({ docs, canManage, enabled, onDelete, onChange
   const [editing, setEditing] = useState<string | null>(null);
   const [eTitle, setETitle] = useState("");
   const [eTags, setETags] = useState<string[]>([]);
+  const [eConf, setEConf] = useState(false);
   const [newTag, setNewTag] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -48,11 +50,12 @@ export default function KbDocList({ docs, canManage, enabled, onDelete, onChange
     if (textFor === d.id) { setTextFor(null); return; }
     guard(async () => { const r = await api.kbDocText(d.id); setText(r.text); setTextFor(d.id); });
   };
-  const startEdit = (d: KbDoc) => { setEditing(d.id); setETitle(d.title || d.source); setETags(d.tags || []); setNewTag(""); };
+  const startEdit = (d: KbDoc) => { setEditing(d.id); setETitle(d.title || d.source); setETags(d.tags || []); setEConf(!!d.confidential); setNewTag(""); };
   const toggleTag = (t: string) => setETags((xs) => xs.includes(t) ? xs.filter((x) => x !== t) : [...xs, t].slice(0, 12));
   const addTag = () => { const t = newTag.trim(); if (t && !eTags.includes(t)) setETags((xs) => [...xs, t].slice(0, 12)); setNewTag(""); };
   const saveEdit = (d: KbDoc) => guard(async () => {
-    await api.kbDocEdit(d.id, { title: eTitle.trim(), tags: eTags }); setEditing(null); onChanged();
+    await api.kbDocEdit(d.id, { title: eTitle.trim(), tags: eTags, ...(allowConfidential ? { confidential: eConf } : {}) });
+    setEditing(null); onChanged();
   });
 
   // Tags are selected, not typed: the pool is the union of tags already used across this library.
@@ -80,6 +83,7 @@ export default function KbDocList({ docs, canManage, enabled, onDelete, onChange
                         title={canManage ? "點擊以編輯名稱與標籤" : (d.title || d.source)}
                         onClick={canManage ? () => startEdit(d) : undefined}>{d.title || d.source}</span>
                   {d.kind === "experience" && <span className="kb-badge">研究經驗</span>}
+                  {d.confidential && <span className="kb-badge lock" title="不外流：不會因「整庫」或「主題」授權分享到別的實驗室">🔒 不外流</span>}
                 </div>
                 <div className="kbfile-meta muted small">
                   {d.size ? fmtSize(d.size) : "—"} · {d.chunks} 段
@@ -123,6 +127,12 @@ export default function KbDocList({ docs, canManage, enabled, onDelete, onChange
                          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTag(); } }} />
                   <button className="btn ghost small" type="button" disabled={busy || !newTag.trim()} onClick={addTag}>＋新增</button>
                 </div>
+                {allowConfidential && (
+                  <label className="conf-toggle">
+                    <input type="checkbox" checked={eConf} disabled={busy} onChange={(e) => setEConf(e.target.checked)} />
+                    <span>🔒 不外流<span className="muted small"> · 本室成員照常看得到；但不會因「整庫」或「主題」授權分享給別的實驗室</span></span>
+                  </label>
+                )}
                 <div className="prof-actions">
                   <button className="btn primary small" disabled={busy} onClick={() => saveEdit(d)}>儲存</button>
                   <button className="btn ghost small" disabled={busy} onClick={() => setEditing(null)}>取消</button>
