@@ -130,7 +130,9 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
     }
   }, [initialPrompt, items.length, activeRun, send, onPromptUsed]);
 
-  const stop = async () => { if (activeRun) await api.stop(activeRun).catch(() => {}); };
+  const [stopping, setStopping] = useState(false);
+  useEffect(() => { if (!activeRun) setStopping(false); }, [activeRun]);  // reset once the run ends
+  const stop = async () => { if (!activeRun) return; setStopping(true); await api.stop(activeRun).catch(() => {}); };
 
   const passGate = useCallback(async (action: () => Promise<{ run_id?: string }>) => {
     setGateBusy(true);
@@ -345,7 +347,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
             <textarea value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey}
               rows={Math.min(10, Math.max(2, text.split("\n").length))}
               placeholder={atGate ? "請先用上方的核准／退回處理目前的關卡"
-                : activeRun ? "執行中…可以按「停止」中斷"
+                : activeRun ? (stopping ? "停止中…等目前步驟結束就會中斷" : "執行中…可以按「停止」中斷")
                 : isProject ? "描述你的研究想法，流程會自動開始…" : "描述你的研究問題，或上傳資料與文件…"}
               disabled={!!activeRun || atGate} />
             <div className="composer-bar">
@@ -356,7 +358,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
               <span className="muted small hint">Enter 送出 · Shift+Enter 換行</span>
               <span className="spacer" />
               {activeRun
-                ? <button className="btn danger" onClick={stop}>■ 停止</button>
+                ? <button className="btn danger" onClick={stop} disabled={stopping}>{stopping ? "停止中…" : "■ 停止"}</button>
                 : <button className="btn primary" onClick={() => send()} disabled={!text.trim() || atGate}>送出</button>}
             </div>
           </div>

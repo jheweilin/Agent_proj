@@ -14,7 +14,7 @@ import zipfile
 
 import httpx
 
-from .. import sandbox
+from .. import events, sandbox
 from ..config import settings
 from .base import ToolContext, ToolResult, tool
 
@@ -361,6 +361,17 @@ async def comsol_job(ctx: ToolContext, args: dict) -> ToolResult:
         job = r.json()
         if job.get("status") in TERMINAL or time.time() >= deadline:
             break
+        # honour a user "停止" even while a long solve is running: cancel the COMSOL job and bail,
+        # instead of blocking here until the whole solve finishes
+        if await events.stop_requested(ctx.run_id):
+            try:
+                async with httpx.AsyncClient(timeout=30) as c:
+                    await c.post(_api(f"/jobs/{jid}/cancel"))
+            except Exception:
+                pass
+            return ToolResult(json.dumps({"job_id": jid, "status": "cancelled",
+                                          "note": "使用者按下停止，已取消 COMSOL job"}, ensure_ascii=False),
+                              preview=f"COMSOL {jid}: 已依停止請求取消")
         # live progress bound to this step (see ToolContext.tool_use_id)
         qpos = job.get("queue_position")
         prog: dict = {"status": job.get("status"), "elapsed": int(time.time() - started)}
