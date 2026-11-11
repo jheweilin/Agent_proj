@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, KbDoc, Lab, User } from "./api";
+import { api, Grant, KbDoc, Lab, User } from "./api";
 
 // Per-lab shared knowledge library + membership management.
 // Faculty create labs; members join by code (or are added by email). A lab's documents are
@@ -22,6 +22,14 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
   const [pKeywords, setPKeywords] = useState("");
   const [pPublic, setPPublic] = useState(false);
   const [drafting, setDrafting] = useState(false);
+  // L3 grants (owner) + per-doc tag editing
+  const [grants, setGrants] = useState<{ incoming: Grant[]; outgoing: Grant[] }>({ incoming: [], outgoing: [] });
+  const [approveFor, setApproveFor] = useState<string | null>(null);  // grant id being approved
+  const [aScope, setAScope] = useState<"full" | "documents" | "tags">("full");
+  const [aDocs, setADocs] = useState<Set<string>>(new Set());
+  const [aTags, setATags] = useState("");
+  const [tagEdit, setTagEdit] = useState<string | null>(null);  // doc id whose tags are being edited
+  const [tagText, setTagText] = useState("");
 
   const loadLabs = useCallback(async () => {
     try {
@@ -43,8 +51,11 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
       setPSummary(d.summary || "");
       setPKeywords((d.keywords || []).join("、"));
       setPPublic(!!d.is_public);
-      // only the owner can see / review the nomination queue
-      setPending(d.role === "owner" ? (await api.labKbPending(id)).documents : []);
+      // only the owner can see / review the nomination queue + grants
+      if (d.role === "owner") {
+        setPending((await api.labKbPending(id)).documents);
+        setGrants(await api.labGrants(id));
+      } else { setPending([]); setGrants({ incoming: [], outgoing: [] }); }
     } catch (e: any) { setErr(e.message); }
   }, []);
   useEffect(() => { if (sel) loadDetail(sel); else { setLab(null); setDocs([]); } }, [sel, loadDetail]);
@@ -95,6 +106,26 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
   });
   const adoptDraft = (summary: string, keywords: string[]) => { setPSummary(summary); setPKeywords(keywords.join("、")); };
 
+  const openApprove = (gid: string) => { setApproveFor(gid); setAScope("full"); setADocs(new Set()); setATags(""); };
+  const doApprove = (gid: string) => sel && guard(async () => {
+    const ref = aScope === "documents" ? Array.from(aDocs) : aScope === "tags" ? splitKw(aTags) : [];
+    await api.actGrant(gid, "approve", { scope: aScope, scope_ref: ref });
+    setApproveFor(null); await loadDetail(sel);
+  });
+  const grantAct = (gid: string, action: "reject" | "revoke") =>
+    sel && (action === "reject" || confirm("收回這個授權？對方將立即無法再檢索到。")) &&
+    guard(async () => { await api.actGrant(gid, action); await loadDetail(sel); });
+
+  const startTag = (d: KbDoc) => { setTagEdit(d.id); setTagText((d.tags || []).join("、")); };
+  const saveTag = (d: KbDoc) => sel && guard(async () => {
+    await api.labKbTags(sel, d.id, splitKw(tagText)); setTagEdit(null); await loadDetail(sel);
+  });
+
+  const GRANT_STATUS: Record<string, string> = {
+    requested: "申請中", granted: "已授權", rejected: "已拒絕", revoked: "已收回",
+  };
+  const SCOPE_LABEL: Record<string, string> = { full: "整庫", documents: "指定文件", tags: "指定主題" };
+
   const isOwner = lab?.role === "owner";
   let draft: { summary: string; keywords: string[] } | null = null;
   try { draft = lab?.profile_draft ? JSON.parse(lab.profile_draft) : null; } catch { draft = null; }
@@ -134,13 +165,26 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
             <div className="kb-list">
               {docs.length === 0 && enabled && <div className="muted small pad">這個實驗室庫還沒有文件。</div>}
               {docs.map((d) => (
-                <div key={d.id} className="kb-row">
-                  <div className="kb-main">
-                    <span className="kb-name" title={d.source}>{d.source}</span>
-                    {d.kind === "experience" && <span className="kb-badge">研究經驗</span>}
-                    <span className="muted small">{d.chunks} 段</span>
+                <div key={d.id} className="kb-doc">
+                  <div className="kb-row">
+                    <div className="kb-main">
+                      <span className="kb-name" title={d.source}>{d.source}</span>
+                      {d.kind === "experience" && <span className="kb-badge">研究經驗</span>}
+                      <span className="muted small">{d.chunks} 段</span>
+                      {(d.tags || []).map((t) => <span key={t} className="dir-tag">{t}</span>)}
+                    </div>
+                    <button className="btn ghost small" title="編輯主題標籤（供跨實驗室部分授權）" onClick={() => startTag(d)}>標籤</button>
+                    <button className="icon" title="從實驗室庫刪除" onClick={() => delDoc(d)}>✕</button>
                   </div>
-                  <button className="icon" title="從實驗室庫刪除" onClick={() => delDoc(d)}>✕</button>
+                  {tagEdit === d.id && (
+                    <div className="tag-edit">
+                      <input className="search" placeholder="主題標籤，用、或逗號分隔" value={tagText}
+                             autoFocus disabled={busy} onChange={(e) => setTagText(e.target.value)}
+                             onKeyDown={(e) => e.key === "Enter" && saveTag(d)} />
+                      <button className="btn primary small" disabled={busy} onClick={() => saveTag(d)}>儲存</button>
+                      <button className="btn ghost small" disabled={busy} onClick={() => setTagEdit(null)}>取消</button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -157,6 +201,70 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
                       </div>
                       <button className="btn small" disabled={busy} onClick={() => review(d, "approve")}>納入</button>
                       <button className="icon" title="退回並刪除" disabled={busy} onClick={() => review(d, "reject")}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {isOwner && (grants.incoming.length > 0 || grants.outgoing.length > 0) && (
+              <>
+                <div className="lab-sec-title">跨實驗室授權 <span className="muted small"> · 別的實驗室申請存取、以及你送出的申請</span></div>
+                <div className="kb-list">
+                  {grants.incoming.map((g) => (
+                    <div key={g.id} className="kb-doc">
+                      <div className="kb-row">
+                        <div className="kb-main">
+                          <span className="kb-name">{g.grantee_name}</span>
+                          <span className="muted small">想存取本實驗室{g.note ? `：「${g.note}」` : ""}</span>
+                          <span className="grant-status">{GRANT_STATUS[g.status]}{g.status === "granted" ? `（${SCOPE_LABEL[g.scope]}）` : ""}</span>
+                        </div>
+                        {g.status === "requested" && approveFor !== g.id && (
+                          <>
+                            <button className="btn small" disabled={busy} onClick={() => openApprove(g.id)}>授權</button>
+                            <button className="icon" title="拒絕" disabled={busy} onClick={() => grantAct(g.id, "reject")}>✕</button>
+                          </>
+                        )}
+                        {g.status === "granted" && <button className="btn ghost small" disabled={busy} onClick={() => grantAct(g.id, "revoke")}>收回</button>}
+                      </div>
+                      {approveFor === g.id && (
+                        <div className="grant-approve">
+                          <div className="grant-scopes">
+                            {(["full", "documents", "tags"] as const).map((sc) => (
+                              <label key={sc}><input type="radio" checked={aScope === sc} onChange={() => setAScope(sc)} /> {SCOPE_LABEL[sc]}</label>
+                            ))}
+                          </div>
+                          {aScope === "documents" && (
+                            <div className="grant-docs">
+                              {docs.length === 0 && <span className="muted small">這個庫還沒有文件。</span>}
+                              {docs.map((d) => (
+                                <label key={d.id} className="grant-doc">
+                                  <input type="checkbox" checked={aDocs.has(d.id)} onChange={(e) =>
+                                    setADocs((s) => { const n = new Set(s); e.target.checked ? n.add(d.id) : n.delete(d.id); return n; })} />
+                                  <span className="kb-name">{d.source}</span>
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                          {aScope === "tags" && (
+                            <input className="search" placeholder="授權哪些主題標籤，用、或逗號分隔" value={aTags}
+                                   disabled={busy} onChange={(e) => setATags(e.target.value)} />
+                          )}
+                          <div className="prof-actions">
+                            <button className="btn primary small" disabled={busy || (aScope === "documents" && aDocs.size === 0)}
+                                    onClick={() => doApprove(g.id)}>確認授權</button>
+                            <button className="btn ghost small" disabled={busy} onClick={() => setApproveFor(null)}>取消</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {grants.outgoing.map((g) => (
+                    <div key={g.id} className="kb-row">
+                      <div className="kb-main">
+                        <span className="kb-name">已向 {g.grantor_name} 申請</span>
+                        <span className="grant-status">{GRANT_STATUS[g.status]}{g.status === "granted" ? `（${SCOPE_LABEL[g.scope]}）` : ""}</span>
+                      </div>
                     </div>
                   ))}
                 </div>

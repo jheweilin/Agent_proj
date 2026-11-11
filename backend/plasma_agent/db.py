@@ -135,6 +135,30 @@ class LabMember(Base):
     __table_args__ = (UniqueConstraint("lab_id", "user_id", name="uq_lab_member"),)
 
 
+class KbGrant(Base):
+    """A cross-lab access grant (L3 申請授權, docs/LAB_KNOWLEDGE_PLAN.md).
+
+    Lab `grantee` requests access to lab `grantor`'s knowledge; the grantor's owner decides whether
+    and at what granularity to grant. Nothing is copied — a granted scope just widens what the
+    grantee's threads can retrieve. `scope`: full | documents | tags; `scope_ref` holds the doc ids
+    or tag list for the latter two."""
+    __tablename__ = "kb_grants"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    grantor_lab_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True),
+                                                      ForeignKey("labs.id", ondelete="CASCADE"), index=True)
+    grantee_lab_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True),
+                                                      ForeignKey("labs.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="requested")  # requested|granted|rejected|revoked
+    scope: Mapped[str] = mapped_column(String(20), default="full")        # full|documents|tags
+    scope_ref: Mapped[list] = mapped_column(JSONB, default=list)          # doc ids (documents) or tags (tags)
+    note: Mapped[str] = mapped_column(Text, default="")                   # requester's message
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (UniqueConstraint("grantor_lab_id", "grantee_lab_id", name="uq_kb_grant_pair"),)
+
+
 class KbDataset(Base):
     """A knowledge-base collection. `category`: task (bound to one thread), base (shared), lab (per-lab)."""
     __tablename__ = "kb_datasets"
@@ -239,5 +263,5 @@ async def get_session():
 
 
 __all__ = ["Base", "User", "Thread", "Message", "Project", "Run", "Lab", "LabMember",
-           "KbDataset", "KbDocument", "KbChunk",
+           "KbDataset", "KbDocument", "KbChunk", "KbGrant",
            "SessionLocal", "engine", "init_db", "get_session", "utcnow", "func"]

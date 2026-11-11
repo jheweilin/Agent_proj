@@ -13,7 +13,7 @@ from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, desc, select
+from sqlalchemy import delete, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import secrets
@@ -23,7 +23,7 @@ from .agent import user_message_content
 from .auth import (current_user, hash_password, identity_flags, is_faculty_email, make_token,
                    require_admin, verify_password)
 from .config import (AVAILABLE_MODELS, MAX_ITERATIONS_LIMIT, VALID_EFFORTS, VALID_MODEL_IDS, settings)
-from .db import Lab, LabMember, Message, Run, Thread, User, func, get_session, init_db, utcnow
+from .db import Lab, LabMember, KbGrant, Message, Run, Thread, User, func, get_session, init_db, utcnow
 from .tools.base import text_of
 
 ACTIVE = ("queued", "running")
@@ -931,6 +931,115 @@ async def lab_kb_review(lab_id: str, doc_id: str, action: str, user: User = Depe
     if not ok:
         raise HTTPException(404, "找不到待審文件")
     return {"ok": True}
+
+
+class TagsIn(BaseModel):
+    tags: list[str] = Field(default_factory=list)
+
+
+@app.put("/api/labs/{lab_id}/kb/documents/{doc_id}/tags")
+async def lab_kb_tags(lab_id: str, doc_id: str, body: TagsIn, user: User = Depends(current_user),
+                      s: AsyncSession = Depends(get_session)):
+    """Tag a lab document (topics), so it can be shared by tag in a cross-lab grant (L3)."""
+    lab, _ = await _membership(lab_id, user, s)
+    dsid = await kb.lab_dataset_id(lab.id, name=lab.name)
+    if not await kb.set_document_tags(doc_id, dsid, body.tags):
+        raise HTTPException(404, "找不到文件")
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ cross-lab grants (L3 申請授權)
+
+class GrantRequestIn(BaseModel):
+    grantor_lab_id: str = Field(min_length=1)
+    note: str = Field(default="", max_length=1000)
+
+
+class GrantApproveIn(BaseModel):
+    scope: str = "full"          # full | documents | tags
+    scope_ref: list[str] = Field(default_factory=list)
+
+
+def _is_uuid(x: str) -> bool:
+    try:
+        uuid.UUID(str(x))
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+async def _owner_lab(lab_id: str, user: User, s: AsyncSession) -> Lab:
+    lab, m = await _membership(lab_id, user, s)
+    if m.role != "owner":
+        raise HTTPException(403, "只有實驗室負責人可以操作")
+    return lab
+
+
+def _grant_out(g: KbGrant, names: dict) -> dict:
+    return {"id": str(g.id), "status": g.status, "scope": g.scope, "scope_ref": g.scope_ref or [],
+            "note": g.note, "grantor_lab_id": str(g.grantor_lab_id), "grantee_lab_id": str(g.grantee_lab_id),
+            "grantor_name": names.get(str(g.grantor_lab_id), ""), "grantee_name": names.get(str(g.grantee_lab_id), ""),
+            "created_at": g.created_at.isoformat()}
+
+
+@app.post("/api/labs/{lab_id}/grants/request")
+async def request_grant(lab_id: str, body: GrantRequestIn, user: User = Depends(current_user),
+                        s: AsyncSession = Depends(get_session)):
+    """Owner of the grantee lab {lab_id} requests access to another lab's knowledge. The grantor's
+    owner later decides whether and at what granularity to grant (see docs/LAB_KNOWLEDGE_PLAN.md)."""
+    grantee = await _owner_lab(lab_id, user, s)
+    gid = uuid.UUID(body.grantor_lab_id) if _is_uuid(body.grantor_lab_id) else None
+    grantor = await s.get(Lab, gid) if gid else None
+    if grantor is None:
+        raise HTTPException(404, "找不到目標實驗室")
+    if grantor.id == grantee.id:
+        raise HTTPException(400, "不能向自己的實驗室申請")
+    existing = (await s.execute(select(KbGrant).where(KbGrant.grantor_lab_id == grantor.id,
+                                                      KbGrant.grantee_lab_id == grantee.id))).scalar_one_or_none()
+    if existing and existing.status == "granted":
+        raise HTTPException(400, "已經有有效的授權")
+    if existing:  # re-request after reject/revoke (unique per pair)
+        existing.status, existing.note, existing.requested_by = "requested", body.note.strip(), user.id
+    else:
+        s.add(KbGrant(grantor_lab_id=grantor.id, grantee_lab_id=grantee.id, status="requested",
+                      note=body.note.strip(), requested_by=user.id))
+    await s.commit()
+    return {"ok": True}
+
+
+@app.get("/api/labs/{lab_id}/grants")
+async def list_grants(lab_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    """Owner view of this lab's cross-lab grants: incoming (others asking us) + outgoing (us asking)."""
+    lab = await _owner_lab(lab_id, user, s)
+    rows = (await s.execute(select(KbGrant).where(or_(KbGrant.grantor_lab_id == lab.id,
+            KbGrant.grantee_lab_id == lab.id)).order_by(KbGrant.updated_at.desc()))).scalars().all()
+    ids = {g.grantor_lab_id for g in rows} | {g.grantee_lab_id for g in rows}
+    labs = (await s.execute(select(Lab).where(Lab.id.in_(ids)))).scalars().all() if ids else []
+    names = {str(l.id): l.name for l in labs}
+    incoming = [_grant_out(g, names) for g in rows if g.grantor_lab_id == lab.id]
+    outgoing = [_grant_out(g, names) for g in rows if g.grantee_lab_id == lab.id]
+    return {"incoming": incoming, "outgoing": outgoing}
+
+
+@app.post("/api/grants/{grant_id}/{action}")
+async def act_grant(grant_id: str, action: str, body: GrantApproveIn | None = None,
+                    user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    """Grantor's owner approves (with scope) / rejects / revokes a grant request."""
+    if action not in ("approve", "reject", "revoke"):
+        raise HTTPException(404, "未知的動作")
+    g = await s.get(KbGrant, uuid.UUID(grant_id)) if _is_uuid(grant_id) else None
+    if g is None:
+        raise HTTPException(404, "找不到授權")
+    await _owner_lab(str(g.grantor_lab_id), user, s)  # only the grantor's owner may act
+    if action == "approve":
+        scope = (body.scope if body else "full")
+        if scope not in ("full", "documents", "tags"):
+            raise HTTPException(400, "未知的授權範圍")
+        g.status, g.scope, g.scope_ref = "granted", scope, [x for x in (body.scope_ref if body else []) if x]
+    else:
+        g.status = "rejected" if action == "reject" else "revoked"
+    await s.commit()
+    return {"ok": True, "status": g.status}
 
 
 # ------------------------------------------------------------------ web UI

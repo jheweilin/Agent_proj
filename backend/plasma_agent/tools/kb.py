@@ -18,8 +18,8 @@ from .base import ToolContext, ToolResult, tool
 async def kb_search(ctx: ToolContext, args: dict) -> ToolResult:
     if not kb.enabled():
         return ToolResult("知識庫未啟用（缺少 VOYAGE_API_KEY）。", is_error=True)
-    ds = await kb.datasets_for_thread(ctx.thread_id)
-    res = await kb.search(ds, args["query"], int(args.get("top_k") or 5))
+    scope = await kb.visible_scope(ctx.thread_id)
+    res = await kb.search(scope, args["query"], int(args.get("top_k") or 5))
     if not res:
         return ToolResult("知識庫沒有相關內容（可能還沒上傳文件，或這個查詢沒有匹配）。")
     body = json.dumps({"query": args["query"], "results": res}, ensure_ascii=False, indent=1)
@@ -35,8 +35,8 @@ async def kb_search(ctx: ToolContext, args: dict) -> ToolResult:
 async def kb_read(ctx: ToolContext, args: dict) -> ToolResult:
     if not kb.enabled():
         return ToolResult("知識庫未啟用（缺少 VOYAGE_API_KEY）。", is_error=True)
-    ds = await kb.datasets_for_thread(ctx.thread_id)
-    body = await kb.read_document(ds, args["source"])
+    scope = await kb.visible_scope(ctx.thread_id)
+    body = await kb.read_document(scope, args["source"])
     if body is None:
         return ToolResult(f"知識庫裡找不到符合「{args['source']}」的文件。", is_error=True)
     return ToolResult(body, preview=f"讀取 {args['source']}")

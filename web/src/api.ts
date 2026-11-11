@@ -18,6 +18,10 @@ export type Lab = {
 export type DirectoryLab = {
   id: string; name: string; summary: string; keywords: string[]; member_count: number; is_member: boolean;
 };
+export type Grant = {
+  id: string; status: string; scope: string; scope_ref: string[]; note: string;
+  grantor_lab_id: string; grantee_lab_id: string; grantor_name: string; grantee_name: string; created_at: string;
+};
 export type Thread = { id: string; title: string; domain: string; mode: string; config?: ThreadConfig; created_at: string; updated_at: string; active_run_id: string | null };
 
 export type ToolResult = {
@@ -61,7 +65,7 @@ export type FileEntry = { name: string; path: string; dir: boolean; size: number
 export type KbDoc = {
   id: string; source: string; chunks: number; created_at: string;
   // knowledge-flywheel metadata (lab KB); defaults upload/reference/approved for plain uploads
-  origin?: string; kind?: string; status?: string;
+  origin?: string; kind?: string; status?: string; tags?: string[];
   source_thread_id?: string | null; submitted_by?: string | null; submitted_by_name?: string;
 };
 
@@ -181,6 +185,14 @@ export const api = {
   setLabProfile: (id: string, body: { summary: string; keywords: string[]; is_public: boolean }) =>
     req<Lab>("PUT", `/api/labs/${id}/profile`, body),
   draftLabProfile: (id: string) => req<{ ok: boolean; status: string }>("POST", `/api/labs/${id}/profile/draft`),
+  // L3 申請授權
+  labKbTags: (id: string, docId: string, tags: string[]) =>
+    req<{ ok: boolean }>("PUT", `/api/labs/${id}/kb/documents/${docId}/tags`, { tags }),
+  requestGrant: (granteeLabId: string, grantorLabId: string, note: string) =>
+    req<{ ok: boolean }>("POST", `/api/labs/${granteeLabId}/grants/request`, { grantor_lab_id: grantorLabId, note }),
+  labGrants: (id: string) => req<{ incoming: Grant[]; outgoing: Grant[] }>("GET", `/api/labs/${id}/grants`),
+  actGrant: (grantId: string, action: "approve" | "reject" | "revoke", body?: { scope: string; scope_ref: string[] }) =>
+    req<{ ok: boolean; status: string }>("POST", `/api/grants/${grantId}/${action}`, body),
 };
 
 export function fileUrl(threadId: string, path: string, download = false) {

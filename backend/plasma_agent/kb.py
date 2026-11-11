@@ -12,10 +12,11 @@ import uuid
 from pathlib import Path
 
 import httpx
-from sqlalchemy import delete, func, or_, select, text
+from sqlalchemy import and_, delete, func, or_, select, text
+from sqlalchemy.dialects.postgresql import array
 
 from .config import settings
-from .db import KbChunk, KbDataset, KbDocument, LabMember, SessionLocal, Thread
+from .db import KbChunk, KbDataset, KbDocument, KbGrant, LabMember, SessionLocal, Thread
 
 log = logging.getLogger("plasma_agent.kb")
 VOYAGE = "https://api.voyageai.com/v1"
@@ -179,9 +180,70 @@ async def lab_dataset_id(lab_id, name: str = "") -> uuid.UUID:
     return await get_or_create_dataset(None, category="lab", lab_id=lab_id, name=name or "實驗室庫")
 
 
-async def search(dataset_ids: list[uuid.UUID], query: str, top_k: int = 5, pool: int = 30) -> list[dict]:
-    """Cosine vector search over the given datasets, then Voyage rerank to the best `top_k`."""
-    if not dataset_ids or not query.strip():
+def _as_uuid(x):
+    try:
+        return uuid.UUID(str(x))
+    except (ValueError, TypeError):
+        return None
+
+
+async def visible_scope(thread_id) -> dict:
+    """Everything a thread may retrieve (L3): its own task + base + its owner's labs (via
+    datasets_for_thread), PLUS cross-lab grants to those labs — whole dataset (full), specific
+    documents, or documents carrying granted tags. Nothing is copied; this just widens the filter."""
+    datasets = list(await datasets_for_thread(thread_id))
+    doc_ids: list = []
+    tag_filters: list = []
+    async with SessionLocal() as s:
+        owner = (await s.execute(select(Thread.user_id).where(Thread.id == thread_id))).scalar_one_or_none()
+        lab_ids = list((await s.execute(
+            select(LabMember.lab_id).where(LabMember.user_id == owner))).scalars().all()) if owner else []
+        if lab_ids:
+            grants = (await s.execute(select(KbGrant).where(
+                KbGrant.grantee_lab_id.in_(lab_ids), KbGrant.status == "granted"))).scalars().all()
+            for g in grants:
+                ds = (await s.execute(select(KbDataset.id).where(
+                    KbDataset.category == "lab", KbDataset.lab_id == g.grantor_lab_id))).scalars().first()
+                if ds is None:
+                    continue
+                if g.scope == "full":
+                    datasets.append(ds)
+                elif g.scope == "documents":
+                    doc_ids += [u for u in (_as_uuid(x) for x in (g.scope_ref or [])) if u]
+                elif g.scope == "tags":
+                    tags = [t for t in (g.scope_ref or []) if t]
+                    if tags:
+                        tag_filters.append((ds, tags))
+    return {"datasets": list(dict.fromkeys(datasets)), "doc_ids": doc_ids, "tag_filters": tag_filters}
+
+
+def _norm_scope(scope) -> dict:
+    """Accept either a flat dataset-id list (back-compat) or a full scope dict."""
+    if isinstance(scope, dict):
+        return {"datasets": scope.get("datasets") or [], "doc_ids": scope.get("doc_ids") or [],
+                "tag_filters": scope.get("tag_filters") or []}
+    return {"datasets": list(scope or []), "doc_ids": [], "tag_filters": []}
+
+
+def _scope_clause(scope: dict, doc_model=False):
+    """OR of the reachable-chunk conditions. doc_model=True builds it on KbDocument (for read)."""
+    ds_col = KbDocument.dataset_id if doc_model else KbChunk.dataset_id
+    conds = []
+    if scope["datasets"]:
+        conds.append(ds_col.in_(scope["datasets"]))
+    if scope["doc_ids"]:
+        conds.append((KbDocument.id if doc_model else KbChunk.document_id).in_(scope["doc_ids"]))
+    for ds_id, tags in scope["tag_filters"]:
+        conds.append(and_(ds_col == ds_id, KbDocument.tags.op("?|")(array(tags))))
+    return or_(*conds) if conds else None
+
+
+async def search(scope, query: str, top_k: int = 5, pool: int = 30) -> list[dict]:
+    """Cosine vector search over the visible scope (dataset-id list or a visible_scope dict),
+    then Voyage rerank to the best `top_k`. Only approved documents are searched."""
+    scope = _norm_scope(scope)
+    clause = _scope_clause(scope)
+    if clause is None or not query.strip():
         return []
     qv = (await embed([query], "query"))[0]
     async with SessionLocal() as s:
@@ -189,7 +251,7 @@ async def search(dataset_ids: list[uuid.UUID], query: str, top_k: int = 5, pool:
         rows = (await s.execute(
             select(KbChunk.content, KbDocument.source, KbChunk.chunk_index, dist)
             .join(KbDocument, KbDocument.id == KbChunk.document_id)
-            .where(KbChunk.dataset_id.in_(dataset_ids), KbDocument.status == "approved")
+            .where(clause, KbDocument.status == "approved")
             .order_by(dist).limit(pool))).all()
     cand = [{"content": r[0], "source": r[1], "chunk": r[2], "distance": round(float(r[3]), 4)} for r in rows]
     if not cand:
@@ -205,10 +267,15 @@ async def search(dataset_ids: list[uuid.UUID], query: str, top_k: int = 5, pool:
     return out
 
 
-async def read_document(dataset_ids: list[uuid.UUID], source: str, max_chars: int = 20000) -> str | None:
-    """Return the full text of a stored document (its chunks joined), matched by source name."""
+async def read_document(scope, source: str, max_chars: int = 20000) -> str | None:
+    """Return the full text of a stored document (its chunks joined), matched by source name,
+    restricted to the visible scope (dataset-id list or visible_scope dict)."""
+    scope = _norm_scope(scope)
+    clause = _scope_clause(scope, doc_model=True)
+    if clause is None:
+        return None
     async with SessionLocal() as s:
-        doc = (await s.execute(select(KbDocument).where(KbDocument.dataset_id.in_(dataset_ids),
+        doc = (await s.execute(select(KbDocument).where(clause,
                                                         KbDocument.status == "approved",
                                                         KbDocument.source.ilike(f"%{source}%"))
                                .order_by(KbDocument.created_at.desc()))).scalars().first()
@@ -245,10 +312,24 @@ async def list_documents(dataset_id, status: str | None = "approved") -> list[di
             q = q.where(KbDocument.status == status)
         rows = (await s.execute(q.order_by(KbDocument.created_at.desc()))).scalars().all()
     return [{"id": str(d.id), "source": d.source, "chunks": d.n_chunks,
-             "origin": d.origin, "kind": d.kind, "status": d.status,
+             "origin": d.origin, "kind": d.kind, "status": d.status, "tags": d.tags or [],
              "source_thread_id": str(d.source_thread_id) if d.source_thread_id else None,
              "submitted_by": str(d.submitted_by) if d.submitted_by else None,
              "created_at": d.created_at.isoformat()} for d in rows]
+
+
+async def set_document_tags(doc_id: str, dataset_id, tags: list[str]) -> bool:
+    """Set a document's topic tags (used for tag-scoped cross-lab grants). Scoped to dataset_id."""
+    async with SessionLocal() as s:
+        try:
+            d = await s.get(KbDocument, uuid.UUID(doc_id))
+        except ValueError:
+            return False
+        if d is None or d.dataset_id != dataset_id:
+            return False
+        d.tags = [t.strip() for t in tags if t.strip()][:12]
+        await s.commit()
+    return True
 
 
 async def set_document_status(doc_id: str, dataset_id, status: str) -> bool:

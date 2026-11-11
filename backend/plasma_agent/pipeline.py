@@ -126,8 +126,8 @@ async def _retrieve(outer) -> None:
     # 1) the thread's own knowledge base (uploaded docs) — highest priority
     if kb.enabled():
         try:
-            ds = await kb.datasets_for_thread(outer.thread.id)
-            hits = await kb.search(ds, query, top_k=5)
+            scope = await kb.visible_scope(outer.thread.id)
+            hits = await kb.search(scope, query, top_k=5)
             if hits:
                 parts.append("【你上傳的資料（知識庫）】\n" + json.dumps(hits, ensure_ascii=False, indent=1))
         except Exception as e:
