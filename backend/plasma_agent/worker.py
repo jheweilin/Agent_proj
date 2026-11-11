@@ -91,7 +91,8 @@ async def main() -> None:
     while not stop.is_set():
         await sem.acquire()
         sem.release()
-        item = await r.blpop([events.CLEANUP_KEY, events.NOMINATE_KEY, events.LABPROFILE_KEY, events.QUEUE_KEY], timeout=5)
+        item = await r.blpop([events.CLEANUP_KEY, events.NOMINATE_KEY, events.LABPROFILE_KEY,
+                               events.LABCARDS_KEY, events.QUEUE_KEY], timeout=5)
         if not item:
             continue
         key, value = item
@@ -126,6 +127,17 @@ async def main() -> None:
             pt = asyncio.create_task(profile(value))
             running.add(pt)
             pt.add_done_callback(running.discard)
+            continue
+        if key == events.LABCARDS_KEY:
+            async def cards(lab_id: str):
+                async with sem:
+                    try:
+                        await labs.generate_example_cards(lab_id)
+                    except Exception:
+                        log.exception("lab example cards failed")
+            ct = asyncio.create_task(cards(value))
+            running.add(ct)
+            ct.add_done_callback(running.discard)
             continue
         run_id = value
         log.info("picked run %s", run_id)

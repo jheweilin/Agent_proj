@@ -122,6 +122,7 @@ class Lab(Base):
     is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     profile_draft: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")  # LLM draft, owner reviews
     profile_status: Mapped[str] = mapped_column(String(20), nullable=False, default="", server_default="")  # ''|generating|ready|error
+    example_cards: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")  # auto-generated welcome examples [{title,text}]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -272,6 +273,7 @@ async def init_db() -> None:
         await conn.exec_driver_sql("ALTER TABLE labs ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT false")
         await conn.exec_driver_sql("ALTER TABLE labs ADD COLUMN IF NOT EXISTS profile_draft TEXT NOT NULL DEFAULT ''")
         await conn.exec_driver_sql("ALTER TABLE labs ADD COLUMN IF NOT EXISTS profile_status VARCHAR(20) NOT NULL DEFAULT ''")
+        await conn.exec_driver_sql("ALTER TABLE labs ADD COLUMN IF NOT EXISTS example_cards JSONB NOT NULL DEFAULT '[]'")
 
 
 async def get_session():

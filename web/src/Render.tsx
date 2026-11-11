@@ -306,7 +306,7 @@ export function AssistantTurn({ blocks, attachments, threadId, live, run, roleLa
   return (
     <div className="turn">
       <div className="turn-head">
-        <span className="avatar">研</span><span className="turn-name">{APP_NAME}</span>
+        <span className="avatar">S</span><span className="turn-name">{APP_NAME}</span>
         {roleLabel && <span className="role-chip">{roleLabel}</span>}
         {!live && lastText && (
           <button className="icon small" title="複製回覆" onClick={() => navigator.clipboard?.writeText(lastText.text)}>複製</button>

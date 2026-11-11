@@ -12,10 +12,10 @@ type Live = {
 const emptyLive = (): Live => ({ blocks: [], attachments: [], status: "", error: "", iteration: 0, usage: {}, model: "", startedAt: Date.now(), stage: "" });
 
 export const EXAMPLES = [
-  { title: "數值方法", domain: "general", text: "用 RK4 與 SciPy 的 RK45 解 Lorenz 系統，在相同容差下比較兩者的精度與步數，畫出軌跡與誤差隨時間的變化" },
-  { title: "資料擬合", domain: "general", text: "產生一組帶雜訊的指數衰減數據，用非線性最小二乘擬合出衰減常數並估計其不確定度，附上殘差圖" },
-  { title: "電漿參數", domain: "plasma", text: "用 PlasmaPy 計算氬氣電漿在 n=1e17 m⁻³、Te=3 eV 下的 Debye 長度、電漿頻率與每個 Debye 球內的粒子數，並和解析公式比對" },
-  { title: "COMSOL 模型", domain: "plasma", text: "用 COMSOL 建立一個簡單的 2D 平行板電極靜電模型，算出中間的電位分布並和解析解比較" },
+  { title: "統計檢定", domain: "research", text: "給兩組實驗測量值，先檢查常態性與變異數同質性，再選 t 檢定或無母數檢定判斷差異是否顯著，附箱型圖與效果量" },
+  { title: "資料擬合", domain: "research", text: "產生一組帶雜訊的指數衰減數據，用非線性最小二乘擬合出衰減常數並估計其不確定度，附上殘差圖" },
+  { title: "機器學習", domain: "research", text: "用 scikit-learn 在一個公開資料集上訓練分類模型，做 5 折交叉驗證，報告準確率、混淆矩陣與特徵重要度" },
+  { title: "文獻回顧", domain: "research", text: "搜尋近五年「微塑膠對人體健康的影響」的代表性論文，整理各自的方法與主要發現，並列出可引用的來源" },
 ];
 
 export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed }: {
@@ -218,8 +218,8 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
                 : lastRun?.status === "completed" ? "✓ 完成"
                 : "狀態"}
             </button>
-            <button className={"head-chip" + (panelOpen && panelTab === "files" ? " on" : "")} onClick={() => openPanel("files")} title="工作區檔案瀏覽與下載">檔案</button>
-            <button className={"head-chip" + (panelOpen && panelTab === "detail" ? " on" : "")} onClick={() => openPanel("detail")} title="點對話中任一步驟可看完整輸入與輸出">步驟</button>
+            <button className={"head-chip panel-toggle" + (panelOpen && panelTab === "files" ? " on" : "")} onClick={() => openPanel("files")} title="工作區檔案瀏覽與下載">檔案</button>
+            <button className={"head-chip panel-toggle" + (panelOpen && panelTab === "detail" ? " on" : "")} onClick={() => openPanel("detail")} title="點對話中任一步驟可看完整輸入與輸出">步驟</button>
           </div>
         </header>
 
@@ -318,7 +318,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
               rows={Math.min(10, Math.max(2, text.split("\n").length))}
               placeholder={atGate ? "請先用上方的核准／退回處理目前的關卡"
                 : activeRun ? "執行中…可以按「停止」中斷"
-                : isProject ? "描述你的研究想法，流程會自動開始…" : "描述你的電漿研究問題，或上傳資料與模型檔…"}
+                : isProject ? "描述你的研究想法，流程會自動開始…" : "描述你的研究問題，或上傳資料與文件…"}
               disabled={!!activeRun || atGate} />
             <div className="composer-bar">
               <label className="btn ghost small" title="上傳檔案到工作區 /workspace/uploads">

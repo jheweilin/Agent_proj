@@ -111,6 +111,11 @@ h1, h2, h3, h4, .serif { font-family: "Source Serif 4 Variable", "Noto Serif TC"
 .drawer-count { min-width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; border-radius: 999px; background: var(--panel-3); color: var(--text-2); font-size: 11.5px; font-weight: 600; }
 .drawer-btn.on .drawer-count { background: var(--accent); color: #fff; }
 .topdiv { width: 1px; height: 22px; background: var(--border); flex: none; }
+.drawer-ico-btn { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--border-2); background: var(--panel); color: var(--text-2); border-radius: 9px; font-size: 17px; line-height: 1; cursor: pointer; flex: none; }
+.drawer-ico-btn:hover { border-color: var(--accent-2); background: var(--panel-2); color: var(--text); }
+.drawer-ico-btn.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.drawer-new { margin: 10px 12px 2px; padding: 8px 12px; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 9px; font-size: 14px; font-weight: 600; cursor: pointer; text-align: center; }
+.drawer-new:hover { filter: brightness(1.05); }
 .topbtn-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 17px; height: 17px; padding: 0 5px; margin-left: 5px; border-radius: 999px; background: var(--run); color: #fff; font-size: 11px; font-weight: 700; vertical-align: middle; }
 .topbar .mode-seg { margin-bottom: 0; }
 .main { flex: 1; min-height: 0; display: flex; }
@@ -139,6 +144,11 @@ h1, h2, h3, h4, .serif { font-family: "Source Serif 4 Variable", "Noto Serif TC"
 
 /* welcome — editorial masthead */
 .welcome { margin: 0 auto; max-width: 760px; width: 100%; padding: 7vh 24px 48px; display: flex; flex-direction: column; gap: 40px; overflow-y: auto; max-height: 100%; }
+/* minimal new-chat landing: greeting + example cards + composer */
+.welcome-new { display: flex; flex-direction: column; gap: 26px; width: 100%; }
+.greet { margin: 0; font-family: "Source Serif 4 Variable", "Noto Serif TC", Georgia, serif; font-size: clamp(23px, 3.2vw, 31px); font-weight: 600; letter-spacing: -.005em; }
+.composer-box.landing { max-width: 100%; width: 100%; margin: 0; }
+.composer-box.landing textarea { width: 100%; box-sizing: border-box; resize: none; border: none; background: transparent; padding: 14px 16px 4px; outline: none; display: block; font: inherit; color: var(--text); }
 .hero { display: flex; flex-direction: column; align-items: flex-start; gap: 18px; }
 .kicker { font-size: 13px; color: var(--muted); letter-spacing: .04em; }
 .hero-title { margin: 0; font-size: clamp(30px, 4.6vw, 46px); line-height: 1.16; font-weight: 600; letter-spacing: -.005em; }
@@ -158,7 +168,10 @@ h1, h2, h3, h4, .serif { font-family: "Source Serif 4 Variable", "Noto Serif TC"
 /* examples */
 .examples { display: flex; flex-direction: column; gap: 14px; }
 .chat .examples { padding-top: 6vh; }
-.examples-title { font-family: "Source Serif 4 Variable", "Noto Serif TC", Georgia, serif; font-weight: 600; font-size: 16px; color: var(--text); }
+.examples-title { font-family: "Source Serif 4 Variable", "Noto Serif TC", Georgia, serif; font-weight: 600; font-size: 16px; color: var(--text); display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.example-src { display: inline-flex; gap: 4px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 9px; padding: 3px; }
+.src-chip { border: none; background: none; padding: 4px 11px; border-radius: 7px; font-size: 13px; font-family: "Source Sans 3", system-ui, sans-serif; font-weight: 500; color: var(--muted); cursor: pointer; }
+.src-chip.on { background: var(--panel); color: var(--accent); box-shadow: var(--shadow); font-weight: 600; }
 .example-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 @media (max-width: 640px) { .example-list { grid-template-columns: 1fr; } }
 .example { text-align: left; border: 1px solid var(--border); background: var(--panel); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
@@ -378,8 +391,12 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
 .tabs button { flex: 1; border: none; background: none; padding: 6px; border-radius: 8px; }
 .tabs button.on { background: var(--panel); box-shadow: var(--shadow); font-weight: 600; }
 
-@media (max-width: 1100px) {
-  .panel { position: fixed; right: 0; top: 0; bottom: 0; z-index: 20; width: min(480px, 94vw); box-shadow: -6px 0 24px rgba(0,0,0,.18); }
+/* the side panel always pushes the conversation (it never overlays/covers it); as the window narrows
+   it shrinks first, then hides entirely once the conversation would get too cramped */
+@media (max-width: 1240px) { .panel { width: 360px; } }
+@media (max-width: 1000px) {
+  .panel { display: none !important; }
+  .head-chip.panel-toggle { display: none; }
 }
 @media (max-width: 760px) {
   .topbar { gap: 6px; padding: 0 10px; overflow-x: auto; }

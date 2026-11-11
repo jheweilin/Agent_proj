@@ -811,7 +811,8 @@ async def kb_doc_replace(doc_id: str, file: UploadFile = File(...), user: User =
 def _lab_out(lab: Lab, role: str, member_count: int | None = None) -> dict:
     out = {"id": str(lab.id), "name": lab.name, "role": role, "owner_id": str(lab.owner_id),
            "created_at": lab.created_at.isoformat(),
-           "summary": lab.summary, "keywords": lab.keywords or [], "is_public": lab.is_public}
+           "summary": lab.summary, "keywords": lab.keywords or [], "is_public": lab.is_public,
+           "example_cards": lab.example_cards or []}
     if role == "owner":
         out["join_code"] = lab.join_code  # only the owner sees/shares the join code
         out["profile_draft"] = lab.profile_draft
@@ -992,6 +993,9 @@ async def set_lab_profile(lab_id: str, body: ProfileIn, user: User = Depends(cur
     lab.keywords = [k.strip() for k in body.keywords if k.strip()][:8]
     lab.is_public = body.is_public
     await s.commit()
+    # regenerate the home example cards from the freshly-adopted profile (LLM runs in the worker)
+    if kb.enabled() and (lab.summary or lab.keywords):
+        await events.enqueue_lab_cards(str(lab.id))
     return _lab_out(lab, m.role)
 
 

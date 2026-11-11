@@ -14,7 +14,9 @@ export type Lab = {
   // L2 specialty profile (公開名片)
   summary?: string; keywords?: string[]; is_public?: boolean;
   profile_draft?: string; profile_status?: string;  // owner only
+  example_cards?: ExampleCard[];  // auto-generated home examples tailored to the lab's field
 };
+export type ExampleCard = { title: string; text: string };
 export type DirectoryLab = {
   id: string; name: string; summary: string; keywords: string[]; member_count: number; is_member: boolean;
 };
