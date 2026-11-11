@@ -2,6 +2,12 @@ import { DragEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, Grant, KbDoc, Lab, User } from "./api";
 import KbDocList from "./KbDocList";
 
+const IcTrash = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+  <path d="M3 6h18" /><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+  <path d="M6 6v14a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V6" /><path d="M10 11v6" /><path d="M14 11v6" /></svg>;
+const initial = (s: string) => (s || "?").trim().charAt(0).toUpperCase();
+
 // Per-lab shared knowledge library + membership management.
 // Faculty create labs; members join by code (or are added by email). A lab's documents are
 // searchable only from threads owned by its members.
@@ -202,57 +208,64 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
             )}
 
             {section === "members" && lab && (<>
-              <div className="lab-sec-head">
-                <div className="lab-sec-title">成員{lab.member_count != null && <span className="muted small"> · {lab.member_count} 人</span>}</div>
-                {(lab.members?.length ?? 0) > 1 &&
-                  <input className="search kb-search" placeholder="搜尋成員…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />}
-              </div>
-              {isOwner && (
-                <div className="lab-code">
-                  <span className="muted small">加入碼</span>
-                  <code className="join-code">{lab.join_code}</code>
-                  <button className="btn small" disabled={busy}
-                          onClick={() => navigator.clipboard?.writeText(lab.join_code || "").catch(() => {})}>複製</button>
-                  <button className="btn small" disabled={busy} onClick={regen}>重置</button>
+              <div className="lab-toolbar">
+                <div className="lab-toolbar-top">
+                  <div className="lab-sec-title">成員{lab.member_count != null && <span className="muted small"> · {lab.member_count} 人</span>}</div>
+                  {(lab.members?.length ?? 0) > 1 &&
+                    <input className="search kb-search" placeholder="搜尋成員…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />}
                 </div>
-              )}
-              <div className="kb-list">
+                {isOwner && (
+                  <div className="lab-toolbar-actions">
+                    <input className="search" placeholder="用 Email 加入已註冊成員…" value={addEmail}
+                           onChange={(e) => setAddEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addMember()} />
+                    <button className="btn primary small" disabled={busy || !addEmail.trim()} onClick={addMember}>加入</button>
+                    <span className="lab-code">
+                      <span className="muted small hint"
+                            data-tip="把這組加入碼給你的學生／成員，他們在頂部「實驗室庫 → 建立／加入」輸入即可加入本實驗室。按「重置」會讓舊碼立即失效。">加入碼 ⓘ</span>
+                      <code className="join-code">{lab.join_code}</code>
+                      <button className="btn small hint" data-tip="複製加入碼" disabled={busy}
+                              onClick={() => navigator.clipboard?.writeText(lab.join_code || "").catch(() => {})}>複製</button>
+                      <button className="btn small hint" data-tip="產生新的加入碼，舊碼立即失效" disabled={busy} onClick={regen}>重置</button>
+                    </span>
+                  </div>
+                )}
+              </div>
+              <div className="kb-list member-list">
                 {(lab.members || [])
                   .filter((m) => !secQ.trim() || [m.name, m.email].some((x) => (x || "").toLowerCase().includes(secQ.trim().toLowerCase())))
                   .map((m) => (
                   <div key={m.user_id} className="kb-row">
+                    <span className="kb-avatar">{initial(m.name || m.email)}</span>
                     <div className="kb-main">
                       <span className="kb-name">{m.name || m.email}</span>
-                      <span className="muted small">{m.role === "owner" ? "負責人" : m.email}</span>
+                      {m.role === "owner" && <span className="role-badge">負責人</span>}
+                      <span className="muted small kb-sub">{m.email}</span>
                     </div>
                     {isOwner && m.role !== "owner" &&
-                      <button className="icon" title="移除成員" onClick={() => removeMember(m.user_id, m.name || m.email)}>✕</button>}
+                      <button className="iconbtn danger" title="移除成員" disabled={busy}
+                              onClick={() => removeMember(m.user_id, m.name || m.email)}><IcTrash /></button>}
                   </div>
                 ))}
               </div>
-              {isOwner ? (
-                <div className="lab-form">
-                  <input className="search" placeholder="用 Email 加入已註冊成員…" value={addEmail}
-                         onChange={(e) => setAddEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addMember()} />
-                  <button className="btn small" disabled={busy || !addEmail.trim()} onClick={addMember}>加入</button>
-                </div>
-              ) : (
-                <div className="lab-form"><button className="btn small" disabled={busy} onClick={leave}>退出這個實驗室</button></div>
+              {!isOwner && (
+                <div className="lab-footer"><button className="btn ghost small" disabled={busy} onClick={leave}>退出這個實驗室</button></div>
               )}
             </>)}
 
             {section === "pending" && isOwner && (<>
-              <div className="lab-sec-head">
-                <div className="lab-sec-title">待審納入 <span className="muted small"> · 成員提名、你核准後才進庫並可被檢索</span></div>
-                {pendingN > 1 &&
-                  <input className="search kb-search" placeholder="搜尋待審…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />}
+              <div className="lab-toolbar">
+                <div className="lab-toolbar-top">
+                  <div className="lab-sec-title">待審納入 <span className="muted small"> · 成員提名、你核准後才進庫並可被檢索</span></div>
+                  {pendingN > 1 &&
+                    <input className="search kb-search" placeholder="搜尋待審…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />}
+                </div>
               </div>
               {pendingN === 0 && <div className="muted small pad">目前沒有待審的研究經驗。</div>}
               <div className="kb-list">
                 {pending
                   .filter((d) => !secQ.trim() || [d.source, d.submitted_by_name].some((x) => (x || "").toLowerCase().includes(secQ.trim().toLowerCase())))
                   .map((d) => (
-                  <div key={d.id} className="kb-row pending">
+                  <div key={d.id} className="kb-row lab-card await">
                     <div className="kb-main">
                       <span className="kb-name" title={d.source}>{d.source}</span>
                       {d.submitted_by_name && <span className="muted small">由 {d.submitted_by_name} 提名 · {d.chunks} 段</span>}
@@ -262,35 +275,37 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
                          target="_blank" rel="noreferrer" title="唯讀看學生當初的完整研究對話（含步驟與圖）">看完整對話</a>
                     )}
                     <button className="btn primary small" disabled={busy} onClick={() => review(d, "approve")}>納入</button>
-                    <button className="icon" title="退回並刪除" disabled={busy} onClick={() => review(d, "reject")}>✕</button>
+                    <button className="iconbtn danger" title="退回並刪除" disabled={busy} onClick={() => review(d, "reject")}><IcTrash /></button>
                   </div>
                 ))}
               </div>
             </>)}
 
             {section === "grants" && isOwner && (<>
-              <div className="lab-sec-head">
-                <div className="lab-sec-title">跨實驗室授權 <span className="muted small"> · 別的實驗室申請存取、以及你送出的申請</span></div>
-                {grants.incoming.length + grants.outgoing.length > 1 &&
-                  <input className="search kb-search" placeholder="搜尋授權…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />}
+              <div className="lab-toolbar">
+                <div className="lab-toolbar-top">
+                  <div className="lab-sec-title">跨實驗室授權 <span className="muted small"> · 別的實驗室申請存取、以及你送出的申請</span></div>
+                  {grants.incoming.length + grants.outgoing.length > 1 &&
+                    <input className="search kb-search" placeholder="搜尋授權…" value={secQ} onChange={(e) => setSecQ(e.target.value)} />}
+                </div>
               </div>
               {grants.incoming.length === 0 && grants.outgoing.length === 0 &&
                 <div className="muted small pad">還沒有任何跨實驗室授權往來。到「名錄」可申請存取別的實驗室。</div>}
-              <div className="kb-list">
+              <div className="kb-list grant-list">
                 {grants.incoming
                   .filter((g) => !secQ.trim() || [g.grantee_name, g.note].some((x) => (x || "").toLowerCase().includes(secQ.trim().toLowerCase())))
                   .map((g) => (
-                  <div key={g.id} className="kb-doc">
+                  <div key={g.id} className={`kb-doc lab-card ${g.status === "granted" ? "ok" : g.status === "requested" ? "await" : "neutral"}`}>
                     <div className="kb-row">
                       <div className="kb-main">
                         <span className="kb-name">{g.grantee_name}</span>
                         <span className="muted small">想存取本實驗室{g.note ? `：「${g.note}」` : ""}</span>
-                        <span className="grant-status">{GRANT_STATUS[g.status]}{g.status === "granted" ? `（${SCOPE_LABEL[g.scope]}）` : ""}</span>
+                        <span className={`grant-status ${g.status}`}>{GRANT_STATUS[g.status]}{g.status === "granted" ? `（${SCOPE_LABEL[g.scope]}）` : ""}</span>
                       </div>
                       {g.status === "requested" && approveFor !== g.id && (
                         <>
                           <button className="btn small" disabled={busy} onClick={() => openApprove(g.id)}>授權</button>
-                          <button className="icon" title="拒絕" disabled={busy} onClick={() => grantAct(g.id, "reject")}>✕</button>
+                          <button className="iconbtn danger" title="拒絕並移除申請" disabled={busy} onClick={() => grantAct(g.id, "reject")}><IcTrash /></button>
                         </>
                       )}
                       {g.status === "granted" && <button className="btn ghost small" disabled={busy} onClick={() => grantAct(g.id, "revoke")}>收回</button>}
@@ -330,10 +345,10 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
                 {grants.outgoing
                   .filter((g) => !secQ.trim() || (g.grantor_name || "").toLowerCase().includes(secQ.trim().toLowerCase()))
                   .map((g) => (
-                  <div key={g.id} className="kb-row">
+                  <div key={g.id} className={`kb-row lab-card ${g.status === "granted" ? "ok" : g.status === "requested" ? "await" : "neutral"}`}>
                     <div className="kb-main">
                       <span className="kb-name">已向 {g.grantor_name} 申請</span>
-                      <span className="grant-status">{GRANT_STATUS[g.status]}{g.status === "granted" ? `（${SCOPE_LABEL[g.scope]}）` : ""}</span>
+                      <span className={`grant-status ${g.status}`}>{GRANT_STATUS[g.status]}{g.status === "granted" ? `（${SCOPE_LABEL[g.scope]}）` : ""}</span>
                     </div>
                   </div>
                 ))}
