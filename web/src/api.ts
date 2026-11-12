@@ -172,8 +172,10 @@ export const api = {
     req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/reject`, { feedback }),
   answerClarify: (id: string, answers: string) =>
     req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/clarify`, { answers }),
-  resume: (id: string) =>
-    req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/resume`),
+  resume: (id: string, note?: string) =>
+    req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/resume`, { note: note || "" }),
+  handoff: (id: string, note: string) =>
+    req<{ ok: boolean; status: string; run_id?: string }>("POST", `/api/threads/${id}/handoff`, { note }),
   toolDetail: (id: string, toolId: string) => req<ToolDetail>("GET", `/api/threads/${id}/tools/${toolId}`),
   shareThread: (id: string, shared: boolean) =>
     req<{ ok: boolean; shared: boolean }>("POST", `/api/threads/${id}/share`, { shared }),

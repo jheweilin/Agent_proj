@@ -568,15 +568,34 @@ async def answer_clarify(thread_id: str, body: AnswerIn, user: User = Depends(cu
     return res
 
 
+class ResumeIn(BaseModel):
+    note: str = Field(default="", max_length=4000)
+
+
 @app.post("/api/threads/{thread_id}/resume")
-async def resume_project(thread_id: str, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
-    """Continue an interrupted research project from where its last run stopped/failed."""
+async def resume_project(thread_id: str, body: ResumeIn = Body(default=ResumeIn()),
+                         user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    """Continue an interrupted research project from where its last run stopped/failed (optional note)."""
     t = await _own_thread(thread_id, user, s)
     if await _active_run(t.id, s):
         raise HTTPException(409, "這個專案還在執行中")
-    res = await pipeline.resume(t)
+    res = await pipeline.resume(t, body.note or "")
     if not res.get("ok"):
         raise HTTPException(400, res.get("detail", "目前沒有可續跑的研究"))
+    return res
+
+
+@app.post("/api/threads/{thread_id}/handoff")
+async def handoff_project(thread_id: str, body: ResumeIn,
+                          user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
+    """Hand an interrupted project off to free chat: do the user's instruction on the existing
+    results instead of finishing the pipeline (then the thread behaves like a normal chat)."""
+    t = await _own_thread(thread_id, user, s)
+    if await _active_run(t.id, s):
+        raise HTTPException(409, "這個專案還在執行中")
+    res = await pipeline.handoff(t, body.note or "")
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("detail", "目前沒有可接手的中斷研究"))
     return res
 
 

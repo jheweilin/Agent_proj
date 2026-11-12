@@ -49,6 +49,7 @@ export function StageTracker({ project, live, onJump }: { project: Project; live
   const order = project.stages.map((s) => s.name);
   const curIdx = order.indexOf(project.stage);
   const done = project.status === "completed";
+  const handoff = project.status === "handoff";  // left the pipeline mid-way for free chat
   return (
     <div className="track" role="list">
       {project.stages.map((s, i) => {
@@ -64,6 +65,7 @@ export function StageTracker({ project, live, onJump }: { project: Project; live
         const running = state === "current" && project.status === "running" && !!live;
         const gate = GATE.has(s.name);
         const statusText = state === "done" ? "已完成" : waiting ? "待你處理"
+          : handoff && state === "current" ? "已改用對話接手"
           : running || state === "current" ? "進行中" : soon ? "之後（Phase D）" : "尚未開始";
         const m = STAGE_META[s.name];
         return (
@@ -84,13 +86,15 @@ export function StageTracker({ project, live, onJump }: { project: Project; live
 
 type EditStep = { title: string; detail: string; source: string; enabled: boolean };
 
-export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer, onResume }: {
+export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer, onResume, onHandoff }: {
   project: Project; busy: boolean; onApprove: (planSteps?: PlanStep[], planTools?: PlanTool[]) => void;
-  onReject: (fb: string) => void; onAnswer: (answers: string) => void; onResume: () => void;
+  onReject: (fb: string) => void; onAnswer: (answers: string) => void;
+  onResume: (note?: string) => void; onHandoff: (note: string) => void;
 }) {
   const [rejecting, setRejecting] = useState(false);
   const [fb, setFb] = useState("");
   const [ans, setAns] = useState("");
+  const [cont, setCont] = useState("");  // optional instruction when resuming / handing off an interrupted project
   const [steps, setSteps] = useState<EditStep[]>([]);
   const [tools, setTools] = useState<(PlanTool & { enabled: boolean })[]>([]);
   const clarify = project.status === "awaiting_clarification";
@@ -116,11 +120,16 @@ export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer, onRe
           <span className="approve-icon warn">⏸</span>
           <div>
             <strong>研究已中斷</strong>
-            <div className="approve-sub muted small">在「{stageLabel}」階段停止或中斷（可能是你按了停止，或遇到錯誤）。可以從這裡接著跑完。</div>
+            <div className="approve-sub muted small">在「{stageLabel}」階段停止或中斷（可能是你按了停止，或遇到錯誤）。你可以接著跑完整個流程，或改用對話接手、只用目前成果做一件事。</div>
           </div>
         </div>
+        <textarea className="clarify-answer" rows={2} value={cont} onChange={(e) => setCont(e.target.value)}
+          placeholder="（選填）給 agent 的指示，例如：用現有結果直接畫動態 GIF，不用跑完驗證。" />
         <div className="approve-actions">
-          <button className="btn primary" disabled={busy} onClick={onResume}>繼續研究</button>
+          <button className="btn primary" disabled={busy} onClick={() => onResume(cont.trim() || undefined)}
+                  title="從停住的階段接著跑完整個流程（研究後會自動驗證／複現／審查／定等級）">繼續跑完流程</button>
+          <button className="btn" disabled={busy || !cont.trim()} onClick={() => onHandoff(cont.trim())}
+                  title="不跑完流程，用目前已有的成果照你的指示做，之後變成可自由追問的對話">用對話接手</button>
         </div>
       </div>
     );

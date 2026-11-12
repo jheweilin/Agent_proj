@@ -149,7 +149,8 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   const approve = (planSteps?: PlanStep[], planTools?: PlanTool[]) => passGate(() => api.approve(threadId, planSteps, planTools));
   const reject = (fb: string) => passGate(() => api.reject(threadId, fb));
   const answerClarify = (answers: string) => passGate(() => api.answerClarify(threadId, answers));
-  const resume = () => passGate(() => api.resume(threadId));
+  const resume = (note?: string) => passGate(() => api.resume(threadId, note));
+  const handoff = (note: string) => passGate(() => api.handoff(threadId, note));
   const promote = () => passGate(() => api.promote(threadId));
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -346,7 +347,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
                 </div>
               </div>
             )}
-            {atGate && project && <ApprovalBar project={project} busy={gateBusy} onApprove={approve} onReject={reject} onAnswer={answerClarify} onResume={resume} />}
+            {atGate && project && <ApprovalBar project={project} busy={gateBusy} onApprove={approve} onReject={reject} onAnswer={answerClarify} onResume={resume} onHandoff={handoff} />}
             {isProject && !activeRun && project?.status === "completed" && <NominateCard project={project} threadId={threadId} />}
             <div ref={bottomRef} />
           </div>
@@ -369,7 +370,10 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
               rows={Math.min(10, Math.max(2, text.split("\n").length))}
               placeholder={atGate ? "請先用上方的卡片處理目前的關卡（回覆／核准／退回）"
                 : activeRun ? (stopping ? "停止中…等目前步驟結束就會中斷" : "執行中…可以按「停止」中斷")
-                : isProject ? "描述你的研究想法，流程會自動開始…" : "描述你的研究問題，或上傳資料與文件…"}
+                : isProject ? (project?.status === "completed" || project?.status === "handoff"
+                    ? "針對目前的成果繼續追問，或要求調整…"
+                    : "描述你的研究想法，流程會自動開始…")
+                  : "描述你的研究問題，或上傳資料與文件…"}
               disabled={!!activeRun || atGate} />
             <div className="composer-bar">
               <label className="btn ghost small" title="上傳檔案到工作區 /workspace/uploads">

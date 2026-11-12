@@ -475,8 +475,10 @@ async def mark_interrupted(thread_id: uuid.UUID) -> str | None:
     return None
 
 
-async def resume(thread) -> dict:
-    """Continue an interrupted project from where it stopped (re-enqueue a run at the current stage)."""
+async def resume(thread, note: str = "") -> dict:
+    """Continue an interrupted project from where it stopped (re-enqueue a run at the current stage).
+
+    An optional `note` is injected as a user message so the resumed stage follows the extra guidance."""
     async with SessionLocal() as s:
         p = (await s.execute(select(Project).where(Project.thread_id == thread.id))).scalar_one_or_none()
         if p is None:
@@ -490,8 +492,34 @@ async def resume(thread) -> dict:
         p.status = "running"
         rid = run.id
         await s.commit()
+    if (note or "").strip():
+        await _append_user(thread.id, rid, "（續跑補充指示）" + note.strip())
     await events.enqueue_run(str(rid))
     return {"ok": True, "stage": stage, "status": "running", "run_id": str(rid)}
+
+
+async def handoff(thread, note: str) -> dict:
+    """Hand an interrupted project off to free chat: run the user's instruction against the existing
+    results/sandbox instead of finishing the pipeline. The project goes to 'handoff' (a terminal, chat
+    state) so this and every later message is answered by the normal chat loop (see agent.execute_run)."""
+    note = (note or "").strip()
+    if not note:
+        return {"ok": False, "detail": "請先輸入要 agent 用現有成果做的事"}
+    async with SessionLocal() as s:
+        p = (await s.execute(select(Project).where(Project.thread_id == thread.id))).scalar_one_or_none()
+        if p is None:
+            return {"ok": False, "detail": "這個對話不是研究專案"}
+        if p.status != "interrupted":
+            return {"ok": False, "detail": "目前沒有可接手的中斷研究"}
+        run = Run(thread_id=thread.id, status="queued", model="")
+        s.add(run)
+        await s.flush()
+        p.status = "handoff"   # leave the pipeline; further turns are free chat on the existing results
+        rid = run.id
+        await s.commit()
+    await _append_user(thread.id, rid, note)
+    await events.enqueue_run(str(rid))
+    return {"ok": True, "status": "handoff", "run_id": str(rid)}
 
 
 async def answer_clarification(thread, answers: str) -> dict:

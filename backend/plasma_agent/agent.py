@@ -472,7 +472,15 @@ async def execute_run(run_id: str) -> None:
     try:
         if getattr(thread, "mode", "chat") == "project":
             from . import pipeline  # local import avoids a circular import at module load
-            status = await pipeline.advance(run, thread, user, domain, runner)
+            gate = await pipeline.gate_status(thread.id)
+            if gate is not None and gate.status in ("completed", "handoff"):
+                # the pipeline has finished ('completed') or the user handed it off to chat mid-way
+                # ('handoff') — treat further messages as free follow-up chat (full history + tools +
+                # the same sandbox) so they can keep asking / act on the existing results, rather than
+                # the FSM silently doing nothing at a non-runnable stage
+                status = await runner.loop()
+            else:
+                status = await pipeline.advance(run, thread, user, domain, runner)
         else:
             status = await runner.loop()
     except StopRequested:
