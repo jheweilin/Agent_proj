@@ -510,8 +510,16 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
 .clarify-answer { width: 100%; box-sizing: border-box; border: 1px solid var(--border-2); border-radius: 9px; padding: 8px 10px; font: inherit; background: var(--panel); color: var(--text); resize: vertical; outline: none; }
 .clarify-answer:focus { border-color: var(--accent-2); }
 .approve-actions { display: flex; gap: 8px; margin-top: 12px; }
-.plan-tools { margin-top: 12px; }
+.plan-tools { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
 .plan-tools-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+/* read-only library list (no opt-in) + the one external service that needs authorising (COMSOL) */
+.plan-libs { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.lib-chips { display: flex; flex-wrap: wrap; gap: 5px; width: 100%; margin-top: 4px; }
+.lib-chip { border: 1px solid var(--border); background: var(--panel-2); color: var(--text-2); border-radius: 999px; padding: 3px 10px; font-size: 12.5px; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+.comsol-auth { display: flex; gap: 9px; align-items: flex-start; border: 1px solid var(--run); background: var(--run-soft, var(--panel-2)); border-radius: 10px; padding: 10px 12px; cursor: pointer; }
+.comsol-auth.on { border-color: var(--accent); background: var(--accent-soft); }
+.comsol-auth input { margin-top: 3px; }
+.comsol-auth-text { display: flex; flex-direction: column; gap: 2px; }
 .plan-tools-grid { display: flex; flex-wrap: wrap; gap: 6px; }
 .plan-tool { display: inline-flex; align-items: baseline; gap: 6px; border: 1px solid var(--border-2); background: var(--panel); border-radius: 999px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
 .plan-tool.off { opacity: .5; }

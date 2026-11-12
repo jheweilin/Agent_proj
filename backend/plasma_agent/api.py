@@ -495,7 +495,7 @@ class PlanToolIn(BaseModel):
 
 class ApproveIn(BaseModel):
     plan_steps: list[PlanStepIn] | None = Field(default=None, max_length=100)
-    plan_tools: list[PlanToolIn] | None = Field(default=None, max_length=40)
+    comsol_ok: bool = False   # user authorised the external COMSOL service at the plan gate
 
 
 @app.post("/api/threads/{thread_id}/approve")
@@ -503,13 +503,12 @@ async def approve_gate(thread_id: str, body: ApproveIn | None = Body(default=Non
                        user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
     """Pass the current human gate: approve the plan (→ research) or accept the results (→ done).
 
-    The plan gate may carry the user's edited/checked step checklist + tool selection."""
+    The plan gate may carry the user's edited step checklist + whether COMSOL is authorised."""
     t = await _own_thread(thread_id, user, s)
     if await _active_run(t.id, s):
         raise HTTPException(409, "這個專案還在執行中")
     steps = [st.model_dump() for st in body.plan_steps] if body and body.plan_steps is not None else None
-    tools = [tl.model_dump() for tl in body.plan_tools] if body and body.plan_tools is not None else None
-    res = await pipeline.approve(t, steps, tools)
+    res = await pipeline.approve(t, steps, bool(body.comsol_ok) if body else False)
     if not res.get("ok"):
         raise HTTPException(400, res.get("detail", "目前無法核准"))
     return res

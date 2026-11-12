@@ -18,6 +18,14 @@ PLANNER_TOOLS = {"record_plan"}
 # the only tool the clarifier may use: pause and ask the user when a critical unknown blocks planning
 CLARIFIER_TOOLS = {"ask_user"}
 
+# external / licensed / shared services the user must explicitly authorise at the plan gate (vs. free,
+# local sandbox libraries which need no opt-in). Today only COMSOL (shared licence, long solves).
+EXTERNAL_TOOL_PREFIXES = ("comsol",)
+
+
+def is_external_tool(name: str) -> bool:
+    return name.startswith(EXTERNAL_TOOL_PREFIXES)
+
 
 @dataclass(frozen=True)
 class Role:

@@ -70,16 +70,17 @@ async def _latest_user_text(thread_id: uuid.UUID) -> str:
     return ""
 
 
-async def _run_role(outer, role, stage: str, init_messages=None) -> None:
+async def _run_role(outer, role, stage: str, init_messages=None, block_external=False) -> None:
     """Run one LLM stage as its own agent loop, folding its usage into the outer run.
 
     `init_messages` runs the role from a constructed context instead of the thread history
     (used by the Replicator so it can't see the research results — true independence).
+    `block_external` hard-removes external/licensed services (COMSOL) when the user didn't authorise them.
     """
     await outer.publish({"type": "stage_start", "stage": stage, "role": role.name, "label": role.label})
     model, effort, max_iters = agent.thread_runtime(outer.thread, role.name)
     r = agent.Runner(outer.run, outer.thread, outer.user, outer.domain, role=role, init_messages=init_messages,
-                     model=model, effort=effort, max_iters=max_iters)
+                     model=model, effort=effort, max_iters=max_iters, block_external=block_external)
     await r.loop()
     for k in outer.usage:
         outer.usage[k] += r.usage.get(k, 0)
@@ -205,7 +206,7 @@ def _grade(verdict: dict | None, replication: dict | None, review: dict | None) 
     return {"level": level, "passed": passed, "total": total, "summary": summary}
 
 
-async def _verify(outer) -> None:
+async def _verify(outer, block_external=False) -> None:
     """Stage ⑥: independent verification (same sandbox, reruns & checks → structured verdict)."""
     try:
         (sandbox.workspace_dir(str(outer.thread.id)) / ".pipeline" / "verification.json").unlink()
@@ -214,7 +215,7 @@ async def _verify(outer) -> None:
     # the turn must end with a user message before the next LLM role runs (Bedrock has no prefill)
     await agent._save_message(outer.thread.id, outer.run.id, "user", [{"type": "text", "text": _note("verify") +
         "\n（請以獨立驗證者的身分，重跑並查核上述研究結果；完成後用 record_verification 記錄結構化結論。）"}])
-    await _run_role(outer, roles.VERIFIER, "verify")
+    await _run_role(outer, roles.VERIFIER, "verify", block_external=block_external)
     await _set_card(outer.thread.id, verification=_read_json(outer.thread.id, "verification.json"))
 
 
@@ -290,6 +291,7 @@ async def advance(run: Run, thread, user, domain, outer) -> str:
     """Drive the FSM forward from the project's current stage until a gate or terminal state."""
     project = await _get_or_create(thread)
     stage = project.stage
+    comsol_ok = bool((project.card or {}).get("comsol_authorized"))  # external services opt-in from the plan gate
 
     while True:
         if stage == "clarify":
@@ -327,11 +329,11 @@ async def advance(run: Run, thread, user, domain, outer) -> str:
             await outer.publish({"type": "awaiting_approval", "gate": "plan"})
             break
         elif stage == "research":
-            await _run_role(outer, roles.RESEARCHER, stage)
+            await _run_role(outer, roles.RESEARCHER, stage, block_external=not comsol_ok)
             stage = "verify"
             await _set(thread.id, stage, "running", outer)
         elif stage == "verify":
-            await _verify(outer)          # ⑥ independent verification
+            await _verify(outer, block_external=not comsol_ok)          # ⑥ independent verification
             if await _should_retry_research(outer):   # ⑥→⑤: failed verification loops back to research
                 stage = "research"
             else:
@@ -387,34 +389,33 @@ def _approved_plan_note(steps) -> str:
     return "\n".join(lines)
 
 
-def _tools_note(tools) -> str:
-    """The user's confirmed tool selection, appended to the approved-plan note (soft constraint)."""
-    chosen = [t for t in (tools or []) if t.get("enabled", True) and (t.get("name") or "").strip()]
-    if not chosen:
-        return ""
-    names = "、".join((t.get("name") or "").strip() for t in chosen)
-    return ("\n\n使用者確認這個研究**使用下列工具／引擎**（以這些為主，不要用未勾選的；COMSOL 等長時間求解前仍要先問）：\n"
-            + names)
+def _external_note(comsol_ok: bool) -> str:
+    """Tell the Researcher/Verifier whether the user authorised the external COMSOL service. Internal
+    sandbox libraries need no opt-in and are left unconstrained."""
+    if comsol_ok:
+        return ("\n\n使用者已**授權使用 COMSOL** 共用服務（可送有限元求解）。其餘沙盒函式庫自由使用。")
+    return ("\n\n使用者**未授權 COMSOL**：請勿使用 COMSOL 共用服務（相關工具已停用）；需要數值模擬請改用"
+            "開源工具（FEniCS／scikit-fem／自寫 FDM-FVM 等）。其餘沙盒函式庫自由使用。")
 
 
-async def approve(thread, plan_steps=None, plan_tools=None) -> dict:
+async def approve(thread, plan_steps=None, comsol_ok=False) -> dict:
     """Advance through the current human gate. Plan gate → research; acceptance gate → completed.
 
-    `plan_steps` / `plan_tools` are the user's edited/checked checklist + tool selection from the
-    approval UI (None = not edited, fall back to what the Planner recorded)."""
+    `plan_steps` = the user's edited/checked step checklist (None = not edited, use the Planner's).
+    `comsol_ok` = whether the user authorised the external COMSOL service at the plan gate (default off:
+    internal libraries never need opt-in, only external/licensed services do)."""
     async with SessionLocal() as s:
         p = (await s.execute(select(Project).where(Project.thread_id == thread.id))).scalar_one_or_none()
         if p is None:
             return {"ok": False, "detail": "這個對話不是研究專案"}
         if p.status == "awaiting_plan_approval":
             steps = plan_steps if plan_steps is not None else (p.card or {}).get("plan_steps") or []
-            tools = plan_tools if plan_tools is not None else (p.card or {}).get("plan_tools") or []
             run = Run(thread_id=thread.id, status="queued", model="", stage="research")
             s.add(run)
             await s.flush()
-            await _append_user(thread.id, run.id, _approved_plan_note(steps) + _tools_note(tools))
+            await _append_user(thread.id, run.id, _approved_plan_note(steps) + _external_note(comsol_ok))
             p.stage, p.status = "research", "running"
-            p.card = {**(p.card or {}), "verify_retries": 0, "plan_steps": steps, "plan_tools": tools}
+            p.card = {**(p.card or {}), "verify_retries": 0, "plan_steps": steps, "comsol_authorized": comsol_ok}
             await s.commit()
             await events.enqueue_run(str(run.id))
             return {"ok": True, "stage": "research", "status": "running", "run_id": str(run.id)}

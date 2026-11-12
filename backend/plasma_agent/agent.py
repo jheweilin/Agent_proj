@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 import anthropic
 from sqlalchemy import select
 
-from . import domains, events, tools
+from . import domains, events, roles, tools
 from .config import settings
 from .db import Message, Run, SessionLocal, Thread, User, utcnow
 
@@ -186,7 +186,7 @@ def thread_runtime(thread: Thread, key: str) -> tuple[str, str, int]:
 
 class Runner:
     def __init__(self, run: Run, thread: Thread, user: User, domain: domains.Domain, role=None, init_messages=None,
-                 model=None, effort=None, max_iters=None):
+                 model=None, effort=None, max_iters=None, block_external=False):
         self.run = run
         self.thread = thread
         self.user = user
@@ -204,6 +204,9 @@ class Runner:
         dom = domain.allowed_tools(all_names)              # None (all registered) or a set
         domain_set = all_names if dom is None else dom
         self._tool_allow = role.allowed_tools(domain_set) if role is not None else dom
+        if block_external:  # user didn't authorise external/licensed services (COMSOL) → hard-remove them
+            allow = all_names if self._tool_allow is None else set(self._tool_allow)
+            self._tool_allow = {n for n in allow if not roles.is_external_tool(n)}
         self.binding_beta = True     # send thinking-binding-controls beta with drop_block
         self.strip_thinking = False  # fallback: remove earlier thinking blocks from the request copy
         self.usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0,

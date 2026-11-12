@@ -1,5 +1,5 @@
 import { DragEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, Attachment, Block, copyText, eventsUrl, fmtDuration, fmtTime, fmtTokens, Item, modelName, parsePipe, PlanStep, PlanTool, Project, RunInfo, ToolBlock, Usage } from "./api";
+import { api, Attachment, Block, copyText, eventsUrl, fmtDuration, fmtTime, fmtTokens, Item, modelName, parsePipe, PlanStep, Project, RunInfo, ToolBlock, Usage } from "./api";
 import Panel, { PanelTab } from "./Panel";
 import { ApprovalBar, EvidenceCard, NominateCard, PipelineNote, StageTracker, stageLabels } from "./Pipeline";
 import { AssistantTurn, FileOpenCtx, KbDocOpenCtx, KbDocRef, Markdown } from "./Render";
@@ -148,7 +148,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
       onActivity();
     } catch (e: any) { setError(e.message); } finally { setGateBusy(false); }
   }, [load, connect, onActivity]);
-  const approve = (planSteps?: PlanStep[], planTools?: PlanTool[]) => passGate(() => api.approve(threadId, planSteps, planTools));
+  const approve = (planSteps?: PlanStep[], comsolOk?: boolean) => passGate(() => api.approve(threadId, planSteps, comsolOk));
   const reject = (fb: string) => passGate(() => api.reject(threadId, fb));
   const answerClarify = (answers: string) => passGate(() => api.answerClarify(threadId, answers));
   const resume = (note?: string) => passGate(() => api.resume(threadId, note));

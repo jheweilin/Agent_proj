@@ -161,9 +161,9 @@ export const api = {
   send: (id: string, text: string, uploads: string[]) =>
     req<{ run_id: string }>("POST", `/api/threads/${id}/messages`, { text, uploads }),
   stop: (runId: string) => req<{ ok: boolean }>("POST", `/api/runs/${runId}/stop`),
-  approve: (id: string, planSteps?: PlanStep[], planTools?: PlanTool[]) =>
+  approve: (id: string, planSteps?: PlanStep[], comsolOk?: boolean) =>
     req<{ ok: boolean; stage: string; status: string; run_id?: string }>("POST", `/api/threads/${id}/approve`,
-      (planSteps || planTools) ? { ...(planSteps ? { plan_steps: planSteps } : {}), ...(planTools ? { plan_tools: planTools } : {}) } : undefined),
+      { ...(planSteps ? { plan_steps: planSteps } : {}), comsol_ok: !!comsolOk }),
   promote: (id: string) =>
     req<{ ok: boolean; run_id?: string }>("POST", `/api/threads/${id}/promote`),
   dismissPromote: (id: string) =>

@@ -87,7 +87,7 @@ export function StageTracker({ project, live, onJump }: { project: Project; live
 type EditStep = { title: string; detail: string; source: string; enabled: boolean };
 
 export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer, onResume, onHandoff }: {
-  project: Project; busy: boolean; onApprove: (planSteps?: PlanStep[], planTools?: PlanTool[]) => void;
+  project: Project; busy: boolean; onApprove: (planSteps?: PlanStep[], comsolOk?: boolean) => void;
   onReject: (fb: string) => void; onAnswer: (answers: string) => void;
   onResume: (note?: string) => void; onHandoff: (note: string) => void;
 }) {
@@ -97,6 +97,7 @@ export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer, onRe
   const [cont, setCont] = useState("");  // optional instruction when resuming / handing off an interrupted project
   const [steps, setSteps] = useState<EditStep[]>([]);
   const [tools, setTools] = useState<(PlanTool & { enabled: boolean })[]>([]);
+  const [comsolOk, setComsolOk] = useState(false);  // authorise the external COMSOL service (default off)
   const clarify = project.status === "awaiting_clarification";
   const plan = project.status === "awaiting_plan_approval";
   const accept = project.status === "awaiting_acceptance";
@@ -168,13 +169,16 @@ export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer, onRe
   }
   if (!plan && !accept) return null;
   const hasTodo = plan && steps.length > 0;
-  const hasTools = plan && tools.length > 0;
+  // internal sandbox libraries need no opt-in (just listed); only external/licensed services (COMSOL) do
+  const isExternal = (n: string) => /^comsol/i.test(n || "");
+  const libs = tools.filter((t) => (t.name || "").trim() && !isExternal(t.name));
+  const needsComsol = plan && tools.some((t) => isExternal(t.name));
+  const hasToolInfo = plan && (libs.length > 0 || needsComsol);
   // auto-grow the plan textareas so long content wraps instead of being clipped to one line
   const fit = (el: HTMLTextAreaElement | null) => { if (el) { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; } };
   const patch = (i: number, p: Partial<EditStep>) => setSteps((s) => s.map((x, j) => (j === i ? { ...x, ...p } : x)));
   const addStep = () => setSteps((s) => [...s, { title: "", detail: "", source: "自訂", enabled: true }]);
   const removeStep = (i: number) => setSteps((s) => s.filter((_, j) => j !== i));
-  const toggleTool = (i: number, on: boolean) => setTools((s) => s.map((x, j) => (j === i ? { ...x, enabled: on } : x)));
   const anyOn = steps.some((s) => s.enabled);
   return (
     <div className="approve">
@@ -196,18 +200,26 @@ export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer, onRe
           {project.grade.summary && <span className="grade-sum">{project.grade.summary}</span>}
         </div>
       )}
-      {hasTools && !rejecting && (
+      {hasToolInfo && !rejecting && (
         <div className="plan-tools">
-          <div className="plan-tools-title">會用到的工具／引擎（勾選要用的）</div>
-          <div className="plan-tools-grid">
-            {tools.map((t, i) => (
-              <label className={`plan-tool${t.enabled ? "" : " off"}`} key={i}>
-                <input type="checkbox" checked={t.enabled} disabled={busy} onChange={(e) => toggleTool(i, e.target.checked)} />
-                <span className="plan-tool-name">{t.name}</span>
-                {t.why && <span className="plan-tool-why muted small">{t.why}</span>}
-              </label>
-            ))}
-          </div>
+          {libs.length > 0 && (
+            <div className="plan-libs">
+              <span className="plan-tools-title">預計會用到</span>
+              <span className="muted small">（沙盒內建函式庫，免選）</span>
+              <div className="lib-chips">
+                {libs.map((t, i) => <span className="lib-chip" key={i} title={t.why || ""}>{t.name}</span>)}
+              </div>
+            </div>
+          )}
+          {needsComsol && (
+            <label className={`comsol-auth${comsolOk ? " on" : ""}`}>
+              <input type="checkbox" checked={comsolOk} disabled={busy} onChange={(e) => setComsolOk(e.target.checked)} />
+              <span className="comsol-auth-text">
+                <strong>授權使用 COMSOL</strong>
+                <span className="muted small"> — 外部共用服務、一次一個 job、單次求解可能數分鐘～20 分鐘，整條研究可能送多次。不授權就改用開源工具做。</span>
+              </span>
+            </label>
+          )}
         </div>
       )}
       {hasTodo && !rejecting && (
@@ -237,7 +249,7 @@ export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer, onRe
       {!rejecting ? (
         <div className="approve-actions">
           <button className="btn primary" disabled={busy || (hasTodo && !anyOn)}
-                  onClick={() => onApprove(hasTodo ? steps : undefined, hasTools ? tools : undefined)}>
+                  onClick={() => onApprove(hasTodo ? steps : undefined, needsComsol ? comsolOk : false)}>
             {plan ? "核准並開始研究" : "接受並完成"}
           </button>
           <button className="btn ghost" disabled={busy} onClick={() => setRejecting(true)}>退回修改</button>
