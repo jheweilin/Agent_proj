@@ -1,15 +1,29 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getToken, setToken, DomainChoice, ExampleCard, Lab, Thread, ThreadConfig, User } from "./api";
-import { APP_LOCKUP } from "./brand";
+import { APP_LOCKUP, APP_NAME } from "./brand";
 import Chat, { EXAMPLES } from "./Chat";
 import KbLibrary from "./KbLibrary";
 import LabLibrary from "./LabLibrary";
 import LabDirectory from "./LabDirectory";
 import Login from "./Login";
+import MobileThread from "./MobileThread";
 import NewThreadModal from "./NewThreadModal";
 import SharedView from "./SharedView";
 
 type Theme = "auto" | "light" | "dark";
+
+// mobile = read-only viewing (status + results); narrow viewport switches to it automatically,
+// with an escape hatch ("電腦版") that forces the full desktop UI even on a phone.
+function useIsMobile(): boolean {
+  const [m, setM] = useState(() => typeof matchMedia !== "undefined" && matchMedia("(max-width: 768px)").matches);
+  useEffect(() => {
+    const mq = matchMedia("(max-width: 768px)");
+    const on = () => setM(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return m;
+}
 
 function useTheme(): [Theme, (t: Theme) => void] {
   const [theme, setTheme] = useState<Theme>(() => {
@@ -45,6 +59,15 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [theme, setTheme] = useTheme();
+  const isMobile = useIsMobile();
+  const [forceDesktop, setForceDesktop] = useState(() => {
+    try { return localStorage.getItem("pa_force_desktop") === "1"; } catch { return false; }
+  });
+  const mobileRead = isMobile && !forceDesktop;
+  const setForceDesktopPersist = (v: boolean) => {
+    setForceDesktop(v);
+    try { localStorage.setItem("pa_force_desktop", v ? "1" : "0"); } catch { /* ignore */ }
+  };
   const [domainList, setDomainList] = useState<DomainChoice[]>(
     [{ name: "plasma", label: "電漿物理" }, { name: "general", label: "通用研究" }]);
   const [kbOpen, setKbOpen] = useState(false);
@@ -139,25 +162,37 @@ export default function App() {
   const startChat = () => { const t = draft.trim(); if (t) createThread({ domain: "research", mode: "chat" }, t); };
 
   return (
-    <div className="layout">
+    <div className={`layout ${mobileRead ? "mobileview" : ""}`}>
       <header className="topbar">
         <button className={`drawer-ico-btn ${sidebarOpen ? "on" : ""}`} onClick={() => setSidebarOpen((v) => !v)}
                 title="開啟／收合對話列表" aria-label="對話列表">☰</button>
         <div className="brand" onClick={() => { setCurrent(null); setSidebarOpen(false); }} title="回首頁">
           <span className="logo sm" />
-          <span className="brand-name">{APP_LOCKUP}</span>
+          <span className="brand-name">{isMobile ? APP_NAME : APP_LOCKUP}</span>
         </div>
         <span className="spacer" />
-        {user.is_admin && (
-          <button className="topbtn" title="全平台共用基礎知識庫（僅管理員可管理）" onClick={() => setKbOpen(true)}>基礎庫</button>
+        {mobileRead ? (
+          <>
+            <span className="read-badge" title="手機為唯讀檢視，操作請用電腦版">👁 唯讀</span>
+            <button className="topbtn" title="切換成完整的電腦版介面" onClick={() => setForceDesktopPersist(true)}>電腦版</button>
+            <button className="topbtn" title="切換主題" onClick={() => setTheme(nextTheme[theme])}>{themeLabel[theme]}</button>
+            <button className="topbtn" title="登出" onClick={() => { setToken(null); setUser(null); setThreads([]); setCurrent(null); }}>登出</button>
+          </>
+        ) : (
+          <>
+            {user.is_admin && (
+              <button className="topbtn" title="全平台共用基礎知識庫（僅管理員可管理）" onClick={() => setKbOpen(true)}>基礎庫</button>
+            )}
+            <button className="topbtn" title="我的實驗室：文件、成員、待審納入、跨域授權、專長名片" onClick={() => setLabOpen(true)}>
+              實驗室管理{labNotif > 0 && <span className="topbtn-badge">{labNotif}</span>}
+            </button>
+            <button className="topbtn" title="跨實驗室專長名錄" onClick={() => setDirOpen(true)}>名錄</button>
+            {isMobile && <button className="topbtn" title="切回手機唯讀版" onClick={() => setForceDesktopPersist(false)}>手機版</button>}
+            <button className="topbtn" title="切換主題" onClick={() => setTheme(nextTheme[theme])}>{themeLabel[theme]}</button>
+            <span className="avatar user" title={`${user.name}\n${user.email}`}>{(user.name || user.email)[0]?.toUpperCase()}</span>
+            <button className="topbtn" title="登出" onClick={() => { setToken(null); setUser(null); setThreads([]); setCurrent(null); }}>登出</button>
+          </>
         )}
-        <button className="topbtn" title="我的實驗室：文件、成員、待審納入、跨域授權、專長名片" onClick={() => setLabOpen(true)}>
-          實驗室管理{labNotif > 0 && <span className="topbtn-badge">{labNotif}</span>}
-        </button>
-        <button className="topbtn" title="跨實驗室專長名錄" onClick={() => setDirOpen(true)}>名錄</button>
-        <button className="topbtn" title="切換主題" onClick={() => setTheme(nextTheme[theme])}>{themeLabel[theme]}</button>
-        <span className="avatar user" title={`${user.name}\n${user.email}`}>{(user.name || user.email)[0]?.toUpperCase()}</span>
-        <button className="topbtn" title="登出" onClick={() => { setToken(null); setUser(null); setThreads([]); setCurrent(null); }}>登出</button>
       </header>
 
       {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} />}
@@ -166,7 +201,7 @@ export default function App() {
           <input className="search" placeholder="搜尋對話…" value={query} onChange={(e) => setQuery(e.target.value)} />
           <button className="icon" onClick={() => setSidebarOpen(false)} aria-label="關閉">✕</button>
         </div>
-        <button className="drawer-new" onClick={() => { setNewOpen(true); setSidebarOpen(false); }}>＋ 新研究</button>
+        {!mobileRead && <button className="drawer-new" onClick={() => { setNewOpen(true); setSidebarOpen(false); }}>＋ 新研究</button>}
         <div className="thread-list">
           {threads.length === 0 && <div className="muted small pad">還沒有對話</div>}
           {groups.map(([label, list]) => (
@@ -177,10 +212,12 @@ export default function App() {
                      onClick={() => { setCurrent(t.id); setSidebarOpen(false); }}>
                   <span className="thread-title" title={t.title}>{t.title}</span>
                   {t.mode === "project" && <span className="domain-badge project">專案</span>}
-                  <span className="thread-actions" onClick={(e) => e.stopPropagation()}>
-                    <button className="icon" title="重新命名" onClick={() => renameThread(t)}>✎</button>
-                    <button className="icon" title="刪除" onClick={() => removeThread(t)}>✕</button>
-                  </span>
+                  {!mobileRead && (
+                    <span className="thread-actions" onClick={(e) => e.stopPropagation()}>
+                      <button className="icon" title="重新命名" onClick={() => renameThread(t)}>✎</button>
+                      <button className="icon" title="刪除" onClick={() => removeThread(t)}>✕</button>
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
@@ -189,7 +226,31 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {current ? (
+        {mobileRead ? (
+          current ? (
+            <MobileThread key={current} threadId={current} />
+          ) : (
+            <div className="welcome">
+              <div className="welcome-new">
+                <h1 className="greet">{greeting}，{user.name} 👋</h1>
+                <p className="mobile-note">
+                  手機為<strong>唯讀檢視</strong>：可以查看研究狀態、結果與報告。
+                  要開始新研究、核准計畫或管理實驗室，請用電腦版，或點右上「電腦版」切換完整介面。
+                </p>
+                <div className="mobile-recent">
+                  <div className="examples-title">最近的研究</div>
+                  {threads.length === 0 && <div className="muted small">還沒有對話</div>}
+                  {threads.slice(0, 12).map((t) => (
+                    <button key={t.id} className="mobile-thread-row" onClick={() => setCurrent(t.id)}>
+                      <span className="mtr-title">{t.title}</span>
+                      {t.mode === "project" && <span className="domain-badge project">專案</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )
+        ) : current ? (
           <Chat key={current} threadId={current} onActivity={refreshThreads}
             initialPrompt={pending} onPromptUsed={() => setPending(null)} onOpenDirectory={() => setDirOpen(true)} />
         ) : (

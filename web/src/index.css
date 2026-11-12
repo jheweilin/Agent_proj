@@ -100,7 +100,7 @@ h1, h2, h3, h4, .serif { font-family: "Source Serif 4 Variable", "Noto Serif TC"
 .topbar { display: flex; align-items: center; gap: 10px; flex: none; height: 54px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--border); }
 .brand { display: flex; align-items: center; gap: 9px; cursor: pointer; }
 .logo { width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0; background: radial-gradient(circle at 50% 50%, var(--panel) 0 22%, var(--accent) 26% 60%, var(--accent-2) 64% 100%); }
-.brand-name { font-family: "Source Serif 4 Variable", "Noto Serif TC", Georgia, serif; font-weight: 600; font-size: 16px; letter-spacing: 0; }
+.brand-name { font-family: "Source Serif 4 Variable", "Noto Serif TC", Georgia, serif; font-weight: 600; font-size: 16px; letter-spacing: 0; white-space: nowrap; }
 .brand-sub { font-size: 12px; color: var(--muted); }
 .topbtn { border: none; background: none; color: var(--text-2); padding: 6px 10px; border-radius: 8px; font-size: 13.5px; cursor: pointer; white-space: nowrap; }
 .topbtn:hover, .topbtn.on { background: var(--panel-2); color: var(--text); }
@@ -426,6 +426,38 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
   .composer { padding: 8px 16px 12px; }
   .head-chip { padding: 4px 9px; }
 }
+
+/* ---------------------------------------------------- mobile read-only mode (viewport < 768px).
+   A phone is for checking status + reading results; all authoring stays on desktop. The .mobileview
+   class is only present on a narrow viewport (and when the user hasn't forced the desktop UI), so
+   these rules need no media query. */
+.mobileview .topbar { gap: 7px; padding: 0 10px; flex-wrap: nowrap; }
+.mobileview .topbar .spacer { flex: 1 1 0; min-width: 0; }
+.mobileview .topbar .brand-name { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mobileview .topbar .topbtn { padding: 5px 7px; font-size: 13px; white-space: nowrap; }
+.mobileview .topbar .read-badge { padding: 2px 8px; font-size: 12px; flex: none; }
+/* side panel becomes a full-screen overlay (it's otherwise hidden below 1000px) */
+.mobileview .panel { display: flex !important; position: fixed; inset: 54px 0 0 0; z-index: 35; width: auto; border-left: none; }
+.mobileview .panel-body { padding: 12px 14px 24px; }
+.mobileview .preview-pdf { height: 60vh; }
+/* nine-stage tracker: a read-only status strip. Shrink nodes + wrap labels so all 9 stages fit the
+   viewport at a glance (no horizontal scroll that would hide the later stages off the right edge). */
+.mobileview .track { padding: 10px 2px; }
+.mobileview .track-node { min-width: 0; padding: 0 1px; }
+.mobileview .track-dot { width: 22px; height: 22px; font-size: 11px; }
+.mobileview .track-node::before { top: 11px; }
+.mobileview .track-label { font-size: 9.5px; max-width: 44px; line-height: 1.2; }
+/* read-only gate banner: shows the project needs the user, points them to the desktop */
+.mobile-gate { display: flex; align-items: center; gap: 9px; margin: 2px 0 12px; padding: 10px 13px;
+  border: 1px solid var(--run); background: var(--run-soft); border-radius: 11px; font-size: 13.5px; color: var(--text); line-height: 1.5; }
+.mobile-gate-dot { color: var(--run); font-weight: 700; flex: none; }
+/* mobile home */
+.mobile-note { margin: 0; color: var(--text-2); font-size: 14px; line-height: 1.7; }
+.mobile-recent { display: flex; flex-direction: column; gap: 6px; }
+.mobile-thread-row { display: flex; align-items: center; gap: 8px; text-align: left; border: 1px solid var(--border);
+  background: var(--panel); border-radius: 10px; padding: 11px 13px; width: 100%; }
+.mobile-thread-row:hover { border-color: var(--border-2); background: var(--panel-2); }
+.mtr-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .ws-link { border: 1px solid var(--border); background: var(--accent-soft); color: var(--accent); border-radius: 5px; padding: 0 6px; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: .86em; cursor: pointer; }
 .ws-link:hover { border-color: var(--accent-2); }
 .msg.user .bubble .ws-link { background: rgba(255,255,255,.18); color: #fff; border-color: transparent; }
