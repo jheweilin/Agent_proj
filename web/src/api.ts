@@ -96,7 +96,7 @@ export type PlanStep = { title: string; detail: string; source: string; enabled?
 export type PlanTool = { name: string; why: string; enabled?: boolean };
 export type Nomination = { lab_id: string; lab_name: string; status: string; source?: string; doc_id?: string; detail?: string };
 export type ClarifyQuestion = { question: string; why?: string };
-export type CrossLabMatch = { lab_id: string; name: string; summary: string; keywords: string[]; score: number };
+export type CrossLabMatch = { lab_id: string; name: string; summary: string; keywords: string[]; score: number; grant_status?: "none" | "requested" | "granted" };
 export type Project = {
   stage: string; status: string; stages: ProjectStage[];
   grade?: Grade | null; plan_steps?: PlanStep[]; plan_tools?: PlanTool[];

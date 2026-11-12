@@ -422,12 +422,14 @@ export function CrossLabCard({ matches, threadId, topic, onOpenDirectory }:
           )}
           <div className="xlab-actions">
             {onOpenDirectory && <button className="btn ghost small" onClick={onOpenDirectory}>看名錄</button>}
-            {sent[m.lab_id] === "ok"
-              ? <span className="muted small">✓ 已送出合作申請，待對方負責人審核。</span>
-              : grantee
-                ? <button className="btn primary small" disabled={busy === m.lab_id} onClick={() => ask(m)}>
-                    {busy === m.lab_id ? "送出中…" : "申請合作"}</button>
-                : <span className="muted small">想合作可請你的實驗室負責人申請。</span>}
+            {m.grant_status === "granted"
+              ? <span className="xlab-ok small">✓ 已授權，研究時會自動參考他們分享的經驗。</span>
+              : sent[m.lab_id] === "ok" || m.grant_status === "requested"
+                ? <span className="muted small">⏳ 合作申請審核中，待對方負責人同意。</span>
+                : grantee
+                  ? <button className="btn primary small" disabled={busy === m.lab_id} onClick={() => ask(m)}>
+                      {busy === m.lab_id ? "送出中…" : "申請合作"}</button>
+                  : <span className="muted small">想合作可請你的實驗室負責人申請。</span>}
             {sent[m.lab_id]?.startsWith("err:") && <span className="error small">{sent[m.lab_id].slice(4)}</span>}
           </div>
         </div>

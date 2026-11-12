@@ -132,6 +132,24 @@ async def user_lab_ids(user_id) -> set:
     return {str(r[0]) for r in rows}
 
 
+async def grant_status(grantee_lab_ids, grantor_lab_id) -> str:
+    """Strongest grant state from any of the user's labs (grantee) to a grantor lab, for the
+    cross-lab card: 'granted' > 'requested' > 'none'."""
+    from .db import KbGrant
+    if not grantee_lab_ids:
+        return "none"
+    gids = [uuid.UUID(str(x)) for x in grantee_lab_ids]
+    async with SessionLocal() as s:
+        rows = (await s.execute(select(KbGrant.status).where(
+            KbGrant.grantee_lab_id.in_(gids),
+            KbGrant.grantor_lab_id == uuid.UUID(str(grantor_lab_id))))).scalars().all()
+    if "granted" in rows:
+        return "granted"
+    if "requested" in rows:
+        return "requested"
+    return "none"
+
+
 async def match_labs(topic: str, exclude_lab_ids=(), limit: int = 2, max_dist: float = 0.55) -> list[dict]:
     """Find public labs whose specialty is closest to a research topic (cosine on profile_vec).
     Excludes the researcher's own labs; returns [{lab_id, name, summary, keywords, score}] best-first."""

@@ -16,7 +16,7 @@ from sqlalchemy import and_, delete, func, or_, select, text
 from sqlalchemy.dialects.postgresql import array
 
 from .config import settings
-from .db import KbChunk, KbDataset, KbDocument, KbGrant, LabMember, SessionLocal, Thread
+from .db import KbChunk, KbDataset, KbDocument, KbGrant, Lab, LabMember, SessionLocal, Thread
 
 log = logging.getLogger("plasma_agent.kb")
 VOYAGE = "https://api.voyageai.com/v1"
@@ -236,6 +236,51 @@ async def visible_scope(thread_id) -> dict:
                         tag_filters.append((ds, tags))
     return {"datasets": list(dict.fromkeys(datasets)), "grant_datasets": list(dict.fromkeys(grant_datasets)),
             "doc_ids": doc_ids, "tag_filters": tag_filters}
+
+
+async def granted_lab_hits(thread_id, query: str, per_lab_k: int = 3) -> list[dict]:
+    """Cross-lab knowledge this thread may use via grants, grouped **by the granting lab** so the
+    agent can cite it with attribution. Returns [{lab_name, hits:[...]}]. Honours the same scope
+    semantics as visible_scope (full grant excludes 不外流; documents/tags as granted)."""
+    if not enabled() or not query.strip():
+        return []
+    async with SessionLocal() as s:
+        owner = (await s.execute(select(Thread.user_id).where(Thread.id == thread_id))).scalar_one_or_none()
+        if owner is None:
+            return []
+        lab_ids = list((await s.execute(
+            select(LabMember.lab_id).where(LabMember.user_id == owner))).scalars().all())
+        if not lab_ids:
+            return []
+        grants = (await s.execute(select(KbGrant).where(
+            KbGrant.grantee_lab_id.in_(lab_ids), KbGrant.status == "granted"))).scalars().all()
+        by_lab: dict = {}
+        for g in grants:
+            ds = (await s.execute(select(KbDataset.id).where(
+                KbDataset.category == "lab", KbDataset.lab_id == g.grantor_lab_id))).scalars().first()
+            if ds is None:
+                continue
+            lab = await s.get(Lab, g.grantor_lab_id)
+            e = by_lab.setdefault(str(g.grantor_lab_id),
+                                  {"name": lab.name if lab else "", "grant_datasets": [], "doc_ids": [], "tag_filters": []})
+            if g.scope == "full":
+                e["grant_datasets"].append(ds)
+            elif g.scope == "documents":
+                e["doc_ids"] += [u for u in (_as_uuid(x) for x in (g.scope_ref or [])) if u]
+            elif g.scope == "tags":
+                tags = [t for t in (g.scope_ref or []) if t]
+                if tags:
+                    e["tag_filters"].append((ds, tags))
+    out = []
+    for e in by_lab.values():
+        scope = {"datasets": [], "grant_datasets": e["grant_datasets"], "doc_ids": e["doc_ids"], "tag_filters": e["tag_filters"]}
+        try:
+            hits = await search(scope, query, top_k=per_lab_k)
+        except Exception:
+            hits = []
+        if hits:
+            out.append({"lab_name": e["name"], "hits": hits})
+    return out
 
 
 def _norm_scope(scope) -> dict:

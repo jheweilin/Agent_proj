@@ -155,15 +155,22 @@ async def _retrieve(outer) -> None:
     await outer.publish({"type": "stage_start", "stage": stage, "role": "retrieval", "label": "檢索證據"})
     query = await _latest_user_text(outer.thread.id)
     parts: list[str] = []
-    # 1) the thread's own knowledge base (uploaded docs) — highest priority
+    # 1) the thread's own knowledge base (task + base + own labs) — highest priority
     if kb.enabled():
         try:
-            scope = await kb.visible_scope(outer.thread.id)
-            hits = await kb.search(scope, query, top_k=5)
+            own = await kb.datasets_for_thread(outer.thread.id)
+            hits = await kb.search(own, query, top_k=5)
             if hits:
                 parts.append("【你上傳的資料（知識庫）】\n" + json.dumps(hits, ensure_ascii=False, indent=1))
         except Exception as e:
             log.warning("kb retrieval failed: %s", e)
+        # 1b) cross-lab knowledge shared with you via a grant — attributed so you cite the source lab
+        try:
+            for gl in await kb.granted_lab_hits(outer.thread.id, query):
+                parts.append(f"【{gl['lab_name']} 實驗室授權分享的經驗（引用時請註明來源實驗室）】\n"
+                             + json.dumps(gl["hits"], ensure_ascii=False, indent=1))
+        except Exception as e:
+            log.warning("granted-lab retrieval failed: %s", e)
     # 2) literature search (arXiv + OpenAlex)
     try:
         res = await tools.run_tool(outer.ctx, "search_papers",
@@ -178,7 +185,10 @@ async def _retrieve(outer) -> None:
     # cross-lab collaboration: surface public labs whose specialty matches this research topic
     try:
         idea = await _first_user_text(outer.thread.id)
-        matches = await labs.match_labs(idea, await labs.user_lab_ids(outer.user.id))
+        my_labs = await labs.user_lab_ids(outer.user.id)
+        matches = await labs.match_labs(idea, my_labs)
+        for m in matches:   # annotate each with the current grant state (none/requested/granted)
+            m["grant_status"] = await labs.grant_status(my_labs, m["lab_id"])
         if matches:
             await _set_card(outer.thread.id, cross_lab=matches)
             names = "、".join(m["name"] for m in matches)

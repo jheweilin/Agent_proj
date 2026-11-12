@@ -694,6 +694,7 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
 .xlab-name { font-weight: 700; font-family: "Source Serif 4 Variable", "Noto Serif TC", Georgia, serif; }
 .xlab-sum { line-height: 1.6; }
 .xlab-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.xlab-ok { color: var(--ok); font-weight: 600; }
 
 /* lab library */
 .lab-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
