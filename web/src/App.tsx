@@ -148,7 +148,9 @@ export default function App() {
           <span className="brand-name">{APP_LOCKUP}</span>
         </div>
         <span className="spacer" />
-        <button className="topbtn" title="共用基礎知識庫" onClick={() => setKbOpen(true)}>基礎庫</button>
+        {user.is_admin && (
+          <button className="topbtn" title="全平台共用基礎知識庫（僅管理員可管理）" onClick={() => setKbOpen(true)}>基礎庫</button>
+        )}
         <button className="topbtn" title="實驗室共用知識庫" onClick={() => setLabOpen(true)}>
           實驗室庫{labNotif > 0 && <span className="topbtn-badge">{labNotif}</span>}
         </button>

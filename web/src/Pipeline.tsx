@@ -259,23 +259,25 @@ export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer, onRe
 
 // Shown on a COMPLETED project: nominate this research as an experience note into a lab KB (閘門①).
 // Any member may nominate; a lab owner approves it in the 實驗室庫 before it becomes retrievable.
-export function NominateCard({ project, threadId }: { project: Project; threadId: string }) {
+export function NominateCard({ project, threadId, forceShow = false, onClose }:
+  { project: Project; threadId: string; forceShow?: boolean; onClose?: () => void }) {
   const [labs, setLabs] = useState<Lab[]>([]);
   const [sel, setSel] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const [doneAuto, setDoneAuto] = useState(false);  // optimistic: owner's nomination auto-approves
   const [err, setErr] = useState("");
+  // skip hides it for good; the header「納入實驗室庫」button re-opens it on demand via forceShow
   const dismissKey = `pa:nominate-dismissed:${threadId}`;
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(dismissKey) === "1");
   const nom = project.nomination;
+  const hidden = dismissed && !forceShow && !nom && !done;
   useEffect(() => {
-    if (nom || dismissed) return;  // already nominated or dismissed — no need to load labs
+    if (nom || hidden) return;  // already nominated or hidden — no need to load labs
     api.labs().then((r) => { setLabs(r.labs); setSel(r.labs[0]?.id || ""); }).catch(() => {});
-  }, [nom, dismissed]);
+  }, [nom, hidden]);
   if (project.status !== "completed") return null;
-  // user chose to skip; keep it hidden (已提名的卡片仍會顯示狀態，不受此影響)
-  if (dismissed && !nom && !done) return null;
+  if (hidden) return null;  // skipped (已提名的卡片仍會顯示狀態，不受此影響)
 
   if (nom || done) {
     const name = nom?.lab_name || labs.find((l) => l.id === done)?.name || "";
@@ -298,7 +300,7 @@ export function NominateCard({ project, threadId }: { project: Project; threadId
     api.nominate(threadId, sel).then((r) => { setDone(r.lab_id); setDoneAuto(r.auto_approve); })
       .catch((e) => setErr(e.message)).finally(() => setBusy(false));
   };
-  const skip = () => { localStorage.setItem(dismissKey, "1"); setDismissed(true); };
+  const skip = () => { localStorage.setItem(dismissKey, "1"); setDismissed(true); onClose?.(); };
   const selLab = labs.find((l) => l.id === sel);
   const isOwnerOfSel = selLab?.role === "owner";
   return (

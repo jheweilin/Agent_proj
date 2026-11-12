@@ -99,6 +99,37 @@ async def _latest_assistant_text(thread_id: uuid.UUID) -> str:
     return ""
 
 
+async def _report_text(thread_id: uuid.UUID) -> str:
+    """The pipeline's final report = latest assistant text from a staged (pipeline) run, so it isn't
+    shadowed by post-completion follow-up chat turns."""
+    async with SessionLocal() as s:
+        rows = (await s.execute(
+            select(Message).join(Run, Run.id == Message.run_id)
+            .where(Message.thread_id == thread_id, Message.role == "assistant", Run.stage.isnot(None))
+            .order_by(Message.id))).scalars().all()
+    for m in reversed(rows):
+        txt = "\n".join(b.get("text", "") for b in m.content if b.get("type") == "text").strip()
+        if txt:
+            return txt
+    return ""
+
+
+async def _followup_texts(thread_id: uuid.UUID, max_chars: int = 4000) -> str:
+    """Assistant replies from post-completion follow-up chat turns (runs with no pipeline stage), so a
+    nomination can also capture work done after the project finished (extra plots, analyses, …)."""
+    async with SessionLocal() as s:
+        rows = (await s.execute(
+            select(Message).join(Run, Run.id == Message.run_id)
+            .where(Message.thread_id == thread_id, Message.role == "assistant", Run.stage.is_(None))
+            .order_by(Message.id))).scalars().all()
+    out = []
+    for m in rows:
+        txt = "\n".join(b.get("text", "") for b in m.content if b.get("type") == "text").strip()
+        if txt:
+            out.append(txt)
+    return "\n\n".join(out)[:max_chars]
+
+
 def _read_json(thread_id, name: str):
     try:
         return json.loads((sandbox.workspace_dir(str(thread_id)) / ".pipeline" / name).read_text())
@@ -561,7 +592,8 @@ async def build_experience_doc(thread, card: dict) -> tuple[str, str]:
     """Distil a finished project into a structured '存法二' experience note (method + pitfalls +
     negative results + back-link), the unit that gets nominated into a lab KB. Returns (title, markdown)."""
     idea = await _first_user_text(thread.id)
-    report = await _latest_assistant_text(thread.id)
+    report = await _report_text(thread.id) or await _latest_assistant_text(thread.id)
+    followup = await _followup_texts(thread.id)
     plan = (card.get("plan") or "").strip()
     grade = card.get("grade") or {}
     verification = card.get("verification") or {}
@@ -582,10 +614,14 @@ async def build_experience_doc(thread, card: dict) -> tuple[str, str]:
         "驗證摘要": verification.get("summary", ""),
         "踩坑與負面結果（請務必寫進文件）": pitfalls,
     }
+    if followup.strip():
+        ctx["完成後的延伸追問與成果（也要整理進筆記）"] = followup
     prompt = (
         "你要把一個已完成的研究專案，整理成一篇**給實驗室新成員看的經驗筆記**，之後會存進實驗室知識庫、"
         "讓學弟妹用聊天就能問到『學長當初怎麼做、在哪踩雷、怎麼解決的』。請用繁體中文、Markdown，"
-        "**務必保留方法與踩坑／負面結果**（這才是最有價值的部分，不要只寫漂亮的成功結論）。\n\n"
+        "**務必保留方法與踩坑／負面結果**（這才是最有價值的部分，不要只寫漂亮的成功結論）。"
+        "若素材含『完成後的延伸追問與成果』，請把其中有價值的結果（例如額外產生的圖、補充分析）"
+        "也整理進對應段落（方法／關鍵結果）。\n\n"
         "固定結構：\n"
         "# <研究題目>\n"
         "- **研究問題**：\n"

@@ -29,6 +29,8 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   const [mode, setMode] = useState<string>("chat");
   const [shared, setShared] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [nominateOpen, setNominateOpen] = useState(false);  // header「納入實驗室庫」re-opens a skipped nominate card
+  const [nominateHint, setNominateHint] = useState(false);  // one-time pulse on the header button after a skip
   const [copied, setCopied] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
   const [suggestProject, setSuggestProject] = useState<boolean | null>(null);
@@ -237,6 +239,11 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
             <button className="btn ghost small head-promote" disabled={gateBusy} onClick={promote}
                     title="把這個對話接上九階段研究流程（釐清→規劃→研究→驗證→審查，關鍵處你把關）">轉成研究專案</button>
           )}
+          {isProject && !activeRun && project?.status === "completed" && !project.nomination && (
+            <button className={"btn ghost small head-nominate" + (nominateHint ? " pulse" : "")}
+                    onClick={() => { setNominateOpen(true); setNominateHint(false); stickRef.current = true; bottomRef.current?.scrollIntoView({ block: "end" }); }}
+                    title="把這次研究整理成經驗筆記、納入實驗室知識庫">納入實驗室庫</button>
+          )}
           {items.length > 0 && (
             <div className="share-wrap">
               <button className={"btn ghost small" + (shared ? " on" : "")} onClick={() => setShareOpen((v) => !v)}
@@ -348,7 +355,9 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
               </div>
             )}
             {atGate && project && <ApprovalBar project={project} busy={gateBusy} onApprove={approve} onReject={reject} onAnswer={answerClarify} onResume={resume} onHandoff={handoff} />}
-            {isProject && !activeRun && project?.status === "completed" && <NominateCard project={project} threadId={threadId} />}
+            {isProject && !activeRun && project?.status === "completed"
+              && <NominateCard project={project} threadId={threadId} forceShow={nominateOpen}
+                   onClose={() => { setNominateOpen(false); setNominateHint(true); setTimeout(() => setNominateHint(false), 2000); }} />}
             <div ref={bottomRef} />
           </div>
         </div>
