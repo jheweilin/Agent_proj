@@ -17,7 +17,7 @@ import uuid
 
 from sqlalchemy import select
 
-from . import agent, events, kb, roles, sandbox, tools
+from . import agent, events, kb, labs, roles, sandbox, tools
 from .db import Message, Project, Run, SessionLocal, Thread
 
 log = logging.getLogger("plasma_agent.pipeline")
@@ -175,6 +175,16 @@ async def _retrieve(outer) -> None:
     body = "\n\n".join(parts) if parts else "（這次沒有檢索到可用的證據。）"
     text = (EVIDENCE_MARK + "\n【檢索證據 ②（程式自動檢索，供規劃階段引用；只列實際查到的來源，不要杜撰）】\n\n" + body)
     await agent._save_message(outer.thread.id, outer.run.id, "user", [{"type": "text", "text": text}])
+    # cross-lab collaboration: surface public labs whose specialty matches this research topic
+    try:
+        idea = await _first_user_text(outer.thread.id)
+        matches = await labs.match_labs(idea, await labs.user_lab_ids(outer.user.id))
+        if matches:
+            await _set_card(outer.thread.id, cross_lab=matches)
+            names = "、".join(m["name"] for m in matches)
+            await outer.publish({"type": "status", "text": f"找到相關實驗室：{names}"})
+    except Exception as e:
+        log.warning("cross-lab match failed: %s", e)
     await outer.publish({"type": "stage_end", "stage": stage, "role": "retrieval"})
 
 
@@ -683,4 +693,5 @@ def project_out(p: Project | None) -> dict | None:
             "plan_tools": (p.card or {}).get("plan_tools") or [],
             "questions": (p.card or {}).get("questions") or [],
             "nomination": (p.card or {}).get("nomination"),
+            "cross_lab": (p.card or {}).get("cross_lab") or [],
             "stages": [{"name": n, "label": l} for n, l in STAGE_LABELS]}

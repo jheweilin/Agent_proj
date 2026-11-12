@@ -125,6 +125,7 @@ class Lab(Base):
     profile_draft: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")  # LLM draft, owner reviews
     profile_status: Mapped[str] = mapped_column(String(20), nullable=False, default="", server_default="")  # ''|generating|ready|error
     example_cards: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")  # auto-generated welcome examples [{title,text}]
+    profile_vec = mapped_column(Vector(settings.embed_dim), nullable=True)  # embedded summary+keywords, for cross-lab matching
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -283,6 +284,7 @@ async def init_db() -> None:
         await conn.exec_driver_sql("ALTER TABLE labs ADD COLUMN IF NOT EXISTS profile_draft TEXT NOT NULL DEFAULT ''")
         await conn.exec_driver_sql("ALTER TABLE labs ADD COLUMN IF NOT EXISTS profile_status VARCHAR(20) NOT NULL DEFAULT ''")
         await conn.exec_driver_sql("ALTER TABLE labs ADD COLUMN IF NOT EXISTS example_cards JSONB NOT NULL DEFAULT '[]'")
+        await conn.exec_driver_sql(f"ALTER TABLE labs ADD COLUMN IF NOT EXISTS profile_vec vector({settings.embed_dim})")
 
 
 async def get_session():

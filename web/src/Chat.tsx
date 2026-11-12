@@ -1,7 +1,7 @@
 import { DragEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, Attachment, Block, copyText, eventsUrl, fmtDuration, fmtTime, fmtTokens, Item, modelName, parsePipe, PlanStep, Project, RunInfo, ToolBlock, Usage } from "./api";
 import Panel, { PanelTab } from "./Panel";
-import { ApprovalBar, EvidenceCard, NominateCard, PipelineNote, StageTracker, stageLabels } from "./Pipeline";
+import { ApprovalBar, CrossLabCard, EvidenceCard, NominateCard, PipelineNote, StageTracker, stageLabels } from "./Pipeline";
 import { AssistantTurn, FileOpenCtx, KbDocOpenCtx, KbDocRef, Markdown } from "./Render";
 import { meta } from "./tools";
 
@@ -18,8 +18,9 @@ export const EXAMPLES = [
   { title: "文獻回顧", domain: "research", text: "搜尋近五年「微塑膠對人體健康的影響」的代表性論文，整理各自的方法與主要發現，並列出可引用的來源" },
 ];
 
-export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed }: {
+export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed, onOpenDirectory }: {
   threadId: string; onActivity: () => void; initialPrompt?: string | null; onPromptUsed?: () => void;
+  onOpenDirectory?: () => void;
 }) {
   const [title, setTitle] = useState("");
   const [items, setItems] = useState<Item[]>([]);
@@ -353,6 +354,9 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
                         onClick={() => { setDismissPromote(true); api.dismissPromote(threadId).catch(() => {}); }}>繼續用對話</button>
                 </div>
               </div>
+            )}
+            {isProject && !activeRun && project?.cross_lab && project.cross_lab.length > 0 && (
+              <CrossLabCard matches={project.cross_lab} threadId={threadId} topic={title} onOpenDirectory={onOpenDirectory} />
             )}
             {atGate && project && <ApprovalBar project={project} busy={gateBusy} onApprove={approve} onReject={reject} onAnswer={answerClarify} onResume={resume} onHandoff={handoff} />}
             {isProject && !activeRun && project?.status === "completed"

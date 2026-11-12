@@ -9,6 +9,8 @@ import json
 import logging
 import uuid
 
+from sqlalchemy import select
+
 from . import agent, kb
 from .config import settings
 from .db import Lab, SessionLocal
@@ -97,3 +99,62 @@ async def generate_example_cards(lab_id) -> None:
         await _set_profile(lab.id, example_cards=cards)
     except Exception as e:
         log.exception("generate_example_cards failed: %s", e)
+
+
+async def embed_profile(lab_id) -> None:
+    """Embed a lab's specialty card (summary + keywords) into labs.profile_vec so other researchers'
+    topics can be matched against it (cross-lab collaboration). Runs in the worker (Voyage)."""
+    try:
+        if not kb.enabled():
+            return
+        async with SessionLocal() as s:
+            lab = await s.get(Lab, uuid.UUID(str(lab_id)))
+        if lab is None:
+            return
+        text = (lab.summary or "").strip()
+        if lab.keywords:
+            text = (text + "\n關鍵字：" + "、".join(lab.keywords)).strip()
+        vec = (await kb.embed([text], "document"))[0] if text else None
+        async with SessionLocal() as s:
+            lab = await s.get(Lab, uuid.UUID(str(lab_id)))
+            if lab is not None:
+                lab.profile_vec = vec
+                await s.commit()
+    except Exception as e:
+        log.exception("embed_profile failed: %s", e)
+
+
+async def user_lab_ids(user_id) -> set:
+    """Lab ids the user belongs to — excluded from their own cross-lab suggestions."""
+    from .db import LabMember
+    async with SessionLocal() as s:
+        rows = (await s.execute(select(LabMember.lab_id).where(LabMember.user_id == uuid.UUID(str(user_id))))).all()
+    return {str(r[0]) for r in rows}
+
+
+async def match_labs(topic: str, exclude_lab_ids=(), limit: int = 2, max_dist: float = 0.55) -> list[dict]:
+    """Find public labs whose specialty is closest to a research topic (cosine on profile_vec).
+    Excludes the researcher's own labs; returns [{lab_id, name, summary, keywords, score}] best-first."""
+    topic = (topic or "").strip()
+    if not topic or not kb.enabled():
+        return []
+    exclude = {str(x) for x in (exclude_lab_ids or [])}
+    try:
+        qv = (await kb.embed([topic], "query"))[0]
+    except Exception as e:
+        log.exception("match_labs embed failed: %s", e)
+        return []
+    async with SessionLocal() as s:
+        dist = Lab.profile_vec.cosine_distance(qv).label("dist")
+        rows = (await s.execute(
+            select(Lab, dist).where(Lab.is_public.is_(True), Lab.profile_vec.isnot(None))
+            .order_by(dist).limit(limit + len(exclude) + 2))).all()
+    out = []
+    for lab, d in rows:
+        if str(lab.id) in exclude or d is None or d > max_dist:
+            continue
+        out.append({"lab_id": str(lab.id), "name": lab.name, "summary": lab.summary,
+                    "keywords": lab.keywords or [], "score": round(1 - float(d), 3)})
+        if len(out) >= limit:
+            break
+    return out

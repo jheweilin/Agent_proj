@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, Item, Lab, parsePipe, PlanStep, PlanTool, Project } from "./api";
+import { api, CrossLabMatch, Item, Lab, parsePipe, PlanStep, PlanTool, Project } from "./api";
 import { Markdown } from "./Render";
 
 // stages actually implemented in the current phase; the rest show as "之後" (Phase D)
@@ -379,6 +379,59 @@ export function PipelineNote({ note, body }: { note: string; body: string }) {
       <span className="pipe-line" />
       <span className="pipe-tag" title={body}>{NOTE_LABEL[note] || "流程"}{isReject && fb ? `：${fb.slice(0, 40)}` : ""}</span>
       <span className="pipe-line" />
+    </div>
+  );
+}
+
+// Proactive cross-lab collaboration: public labs whose specialty matches this research topic
+export function CrossLabCard({ matches, threadId, topic, onOpenDirectory }:
+  { matches: CrossLabMatch[]; threadId: string; topic?: string; onOpenDirectory?: () => void }) {
+  const [owned, setOwned] = useState<Lab[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [sent, setSent] = useState<Record<string, string>>({});
+  const dismissKey = `pa:xlab-dismissed:${threadId}`;
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem(dismissKey) === "1");
+  useEffect(() => { api.labs().then((r) => setOwned(r.labs.filter((l) => l.role === "owner"))).catch(() => {}); }, []);
+  if (!matches.length || dismissed) return null;
+  const grantee = owned[0];  // the lab that would request access (grant request is owner-only)
+  const ask = (m: CrossLabMatch) => {
+    if (!grantee) return;
+    setBusy(m.lab_id);
+    api.requestGrant(grantee.id, m.lab_id, `就「${topic || "我的研究主題"}」想參考貴實驗室的相關經驗、尋求跨域合作。`)
+      .then(() => setSent((s) => ({ ...s, [m.lab_id]: "ok" })))
+      .catch((e) => setSent((s) => ({ ...s, [m.lab_id]: "err:" + e.message })))
+      .finally(() => setBusy(null));
+  };
+  const skip = () => { localStorage.setItem(dismissKey, "1"); setDismissed(true); };
+  return (
+    <div className="xlab">
+      <button className="nominate-close" onClick={skip} title="略過" aria-label="略過">×</button>
+      <div className="xlab-head">
+        <strong>🔗 跨域合作建議</strong>
+        <div className="muted small">這些實驗室的專長和你的研究相近，可以看他們的名片，或申請合作取得他們分享的經驗。</div>
+      </div>
+      {matches.map((m) => (
+        <div className="xlab-item" key={m.lab_id}>
+          <div className="xlab-item-head">
+            <span className="xlab-name">{m.name}</span>
+            <span className="xlab-score muted small">相近度 {Math.round(m.score * 100)}%</span>
+          </div>
+          {m.summary && <div className="xlab-sum muted small">{m.summary}</div>}
+          {m.keywords?.length > 0 && (
+            <div className="lib-chips">{m.keywords.map((k, i) => <span className="lib-chip" key={i}>{k}</span>)}</div>
+          )}
+          <div className="xlab-actions">
+            {onOpenDirectory && <button className="btn ghost small" onClick={onOpenDirectory}>看名錄</button>}
+            {sent[m.lab_id] === "ok"
+              ? <span className="muted small">✓ 已送出合作申請，待對方負責人審核。</span>
+              : grantee
+                ? <button className="btn primary small" disabled={busy === m.lab_id} onClick={() => ask(m)}>
+                    {busy === m.lab_id ? "送出中…" : "申請合作"}</button>
+                : <span className="muted small">想合作可請你的實驗室負責人申請。</span>}
+            {sent[m.lab_id]?.startsWith("err:") && <span className="error small">{sent[m.lab_id].slice(4)}</span>}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

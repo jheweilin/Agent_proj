@@ -134,6 +134,7 @@ async def main() -> None:
                 async with sem:
                     try:
                         await labs.generate_example_cards(lab_id)
+                        await labs.embed_profile(lab_id)   # for cross-lab topic matching
                     except Exception:
                         log.exception("lab example cards failed")
             ct = asyncio.create_task(cards(value))

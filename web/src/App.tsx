@@ -191,7 +191,7 @@ export default function App() {
       <main className="main">
         {current ? (
           <Chat key={current} threadId={current} onActivity={refreshThreads}
-            initialPrompt={pending} onPromptUsed={() => setPending(null)} />
+            initialPrompt={pending} onPromptUsed={() => setPending(null)} onOpenDirectory={() => setDirOpen(true)} />
         ) : (
           <div className="welcome">
             <div className="welcome-new">
