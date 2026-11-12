@@ -151,8 +151,8 @@ export default function App() {
         {user.is_admin && (
           <button className="topbtn" title="全平台共用基礎知識庫（僅管理員可管理）" onClick={() => setKbOpen(true)}>基礎庫</button>
         )}
-        <button className="topbtn" title="實驗室共用知識庫" onClick={() => setLabOpen(true)}>
-          實驗室庫{labNotif > 0 && <span className="topbtn-badge">{labNotif}</span>}
+        <button className="topbtn" title="我的實驗室：文件、成員、待審納入、跨域授權、專長名片" onClick={() => setLabOpen(true)}>
+          實驗室管理{labNotif > 0 && <span className="topbtn-badge">{labNotif}</span>}
         </button>
         <button className="topbtn" title="跨實驗室專長名錄" onClick={() => setDirOpen(true)}>名錄</button>
         <button className="topbtn" title="切換主題" onClick={() => setTheme(nextTheme[theme])}>{themeLabel[theme]}</button>

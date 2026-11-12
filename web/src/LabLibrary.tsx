@@ -186,7 +186,7 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
     <div className="modal-scrim" onClick={onClose}>
       <div className="modal lablib" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h3>實驗室庫{lab ? `：${lab.name}` : ""}</h3>
+          <h3>實驗室管理{lab ? `：${lab.name}` : ""}</h3>
           {labs.length > 1 && (
             <select className="lablib-switch" value={sel || ""} onChange={(e) => setSel(e.target.value)}>
               {labs.map((l) => <option key={l.id} value={l.id}>{l.name}{l.role === "owner" ? "（負責人）" : ""}</option>)}
@@ -245,7 +245,7 @@ export default function LabLibrary({ user, onClose }: { user: User; onClose: () 
                     <button className="btn primary small" disabled={busy || !addEmail.trim()} onClick={addMember}>加入</button>
                     <span className="lab-code">
                       <span className="muted small hint"
-                            data-tip="把這組加入碼給你的學生／成員，他們在頂部「實驗室庫 → 建立／加入」輸入即可加入本實驗室。按「重置」會讓舊碼立即失效。">加入碼 ⓘ</span>
+                            data-tip="把這組加入碼給你的學生／成員，他們在頂部「實驗室管理 → 建立／加入」輸入即可加入本實驗室。按「重置」會讓舊碼立即失效。">加入碼 ⓘ</span>
                       <code className="join-code">{lab.join_code}</code>
                       <button className="btn small hint" data-tip="複製加入碼" disabled={busy}
                               onClick={() => copyText(lab.join_code || "")}>複製</button>
