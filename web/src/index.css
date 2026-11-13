@@ -297,7 +297,7 @@ h1, h2, h3, h4, .serif { font-family: "Source Serif 4 Variable", "Noto Serif TC"
 .prog-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s ease; }
 .step-body { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
 .step-body:empty { display: none; }
-.tool-img { display: block; max-width: min(100%, 480px); border-radius: 8px; border: 1px solid var(--border); background: #fff; }
+.tool-img { display: block; max-width: min(100%, 480px); border-radius: 8px; border: 1px solid var(--border); background: #fff; cursor: zoom-in; }
 .tool-img.big { max-width: 100%; margin-top: 8px; }
 .diff { display: flex; flex-direction: column; gap: 4px; }
 .diff pre { margin: 0; padding: 6px 10px; border-radius: 8px; font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto; }

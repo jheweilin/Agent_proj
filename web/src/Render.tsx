@@ -12,6 +12,8 @@ export const FileOpenCtx = createContext<((path: string) => void) | null>(null);
 // open a knowledge-base document (lab/base/task) in the side panel — used by the kb_list tool view
 export type KbDocRef = { id: string; title?: string; source: string; mime?: string; has_file?: boolean };
 export const KbDocOpenCtx = createContext<((doc: KbDocRef) => void) | null>(null);
+// enlarge a tool image (see_image) in a lightbox — provided by Chat, consumed in tools.tsx
+export const ImagePreviewCtx = createContext<((path: string) => void) | null>(null);
 
 const isWorkspacePath = (s: string) => s.startsWith("/workspace") || !/^[a-z]+:|^\/\/|^#/i.test(s);
 

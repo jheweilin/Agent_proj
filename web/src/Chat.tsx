@@ -1,8 +1,8 @@
 import { DragEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, Attachment, Block, copyText, eventsUrl, fmtDuration, fmtTime, fmtTokens, Item, modelName, parsePipe, PlanStep, Project, RunInfo, ToolBlock, Usage } from "./api";
+import { api, Attachment, Block, copyText, eventsUrl, fileUrl, fmtDuration, fmtTime, fmtTokens, Item, modelName, parsePipe, PlanStep, Project, RunInfo, ToolBlock, Usage } from "./api";
 import Panel, { PanelTab } from "./Panel";
 import { ApprovalBar, CrossLabCard, EvidenceCard, NominateCard, PipelineNote, StageTracker, stageLabels } from "./Pipeline";
-import { AssistantTurn, FileOpenCtx, KbDocOpenCtx, KbDocRef, Markdown } from "./Render";
+import { AssistantTurn, FileOpenCtx, ImagePreviewCtx, KbDocOpenCtx, KbDocRef, Markdown } from "./Render";
 import { meta } from "./tools";
 
 type Live = {
@@ -32,6 +32,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   const [shareOpen, setShareOpen] = useState(false);
   const [nominateOpen, setNominateOpen] = useState(false);  // header「納入實驗室庫」re-opens a skipped nominate card
   const [nominateHint, setNominateHint] = useState(false);  // one-time pulse on the header button after a skip
+  const [imgZoom, setImgZoom] = useState<string | null>(null);  // see_image path shown enlarged in a lightbox
   const [copied, setCopied] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
   const [suggestProject, setSuggestProject] = useState<boolean | null>(null);
@@ -226,6 +227,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   }, []);
 
   return (
+    <ImagePreviewCtx.Provider value={setImgZoom}>
     <div className="chat-wrap">
       <div className="chat" onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
         {dragging && (
@@ -406,7 +408,18 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
         <Panel threadId={threadId} tab={panelTab} setTab={setPanelTab} selected={selected} filePath={filePath}
           setFilePath={setFilePath} kbDoc={kbDoc} tick={tick} liveRunning={!!activeRun} onClose={() => setPanelOpen(false)} />
       )}
+      {imgZoom && (
+        <div className="lightbox" onClick={() => setImgZoom(null)}>
+          <img src={fileUrl(threadId, imgZoom)} alt={imgZoom.split("/").pop() || ""} onClick={(e) => e.stopPropagation()} />
+          <div className="lightbox-bar" onClick={(e) => e.stopPropagation()}>
+            <span className="mono small">{imgZoom.split("/").pop()}</span>
+            <a className="btn ghost small" href={fileUrl(threadId, imgZoom, true)}>下載</a>
+            <button className="icon" onClick={() => setImgZoom(null)} aria-label="關閉">✕</button>
+          </div>
+        </div>
+      )}
     </div>
+    </ImagePreviewCtx.Provider>
   );
 }
 

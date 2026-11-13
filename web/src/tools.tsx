@@ -1,7 +1,7 @@
 import { ReactNode, useContext } from "react";
 import { fileUrl, kbDocFileUrl, ToolBlock } from "./api";
 import { Code, langFromPath, Terminal } from "./Code";
-import { KbDocOpenCtx } from "./Render";
+import { ImagePreviewCtx, KbDocOpenCtx } from "./Render";
 
 type Meta = { label: string; icon: string; cat: "sbx" | "file" | "job" | "comsol" | "web" | "misc" };
 export const TOOL_META: Record<string, Meta> = {
@@ -116,6 +116,7 @@ function ComsolJob({ d, full }: { d: any; full?: boolean }) {
 /** Compact body shown inside the chat for a tool step. */
 export function ToolBody({ b, threadId }: { b: ToolBlock; threadId: string }) {
   const r = b.result;
+  const openImg = useContext(ImagePreviewCtx);
   const text = r?.output ?? r?.preview ?? "";
   const inp = b.input ?? {};
   switch (b.name) {
@@ -188,7 +189,8 @@ export function ToolBody({ b, threadId }: { b: ToolBlock; threadId: string }) {
       return <div className="muted small">{title ? `${title} · ` : ""}{host(inp.url)}</div>;
     }
     case "see_image":
-      return <>{(r?.images ?? []).map((p) => <img key={p} className="tool-img" src={fileUrl(threadId, p)} alt={p} />)}</>;
+      return <>{(r?.images ?? []).map((p) => <img key={p} className="tool-img" src={fileUrl(threadId, p)} alt={p}
+        title="點擊放大" onClick={() => openImg?.(p)} />)}</>;
     case "kb_list": {
       const d = parseJSON(text);
       return d?.documents ? <KbDocResults docs={d.documents} /> : null;
@@ -225,6 +227,7 @@ export function KbDocResults({ docs }: { docs: any[] }) {
 export function ToolFull({ name, input, text, isError, images, threadId }:
   { name: string; input: any; text?: string; isError?: boolean; images?: string[]; threadId: string }) {
   const inp = input ?? {};
+  const openImg = useContext(ImagePreviewCtx);
   const d = parseJSON(text);
   let inputView: ReactNode = <Code code={JSON.stringify(inp, null, 2)} lang="json" wrap />;
   if (name === "execute_command" || name === "submit_job") inputView = <Terminal command={inp.command} />;
@@ -249,7 +252,8 @@ export function ToolFull({ name, input, text, isError, images, threadId }:
       {inputView}
       <h4>輸出 {isError && <span className="badge bad">錯誤</span>}</h4>
       {text === undefined ? <div className="muted small">執行中…</div> : outputView}
-      {images?.map((p) => <img key={p} className="tool-img big" src={fileUrl(threadId, p)} alt={p} />)}
+      {images?.map((p) => <img key={p} className="tool-img big" src={fileUrl(threadId, p)} alt={p}
+        title="點擊放大" onClick={() => openImg?.(p)} />)}
     </div>
   );
 }
