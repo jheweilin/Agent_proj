@@ -99,7 +99,8 @@ export type ClarifyQuestion = { question: string; why?: string };
 export type CrossLabMatch = { lab_id: string; name: string; summary: string; keywords: string[]; score: number; grant_status?: "none" | "requested" | "granted" };
 export type ReproTarget = {
   paper_title?: string; method?: string; key_params?: Record<string, string>; missing_info?: string[];
-  targets?: { id?: string; what: string; expected?: string; tolerance?: string; where?: string }[];
+  validation_case?: { what?: string; expected?: string; tolerance?: string };
+  targets?: { id?: string; what: string; kind?: string; compare?: string; expected?: string; tolerance?: string; where?: string }[];
 };
 export type Project = {
   stage: string; status: string; stages: ProjectStage[];

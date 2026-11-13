@@ -6,6 +6,7 @@ import { Markdown } from "./Render";
 const IMPLEMENTED = new Set(["clarify", "retrieve", "plan", "approve_plan", "research", "verify", "replicate", "review", "report"]);
 const GATE = new Set(["approve_plan", "report"]); // human gates (report = result acceptance)
 const GRADE_CLASS: Record<string, string> = { "通過": "ok", "部分通過": "warn", "未通過": "bad", "未定": "muted" };
+const KIND_LABEL: Record<string, string> = { table: "表值", line: "折線圖", field: "場圖", scalar: "純量", contour: "等值面" };
 
 const CLAR = "釐清 · Clarifier", PLAN = "規劃 · Planner", RES = "研究 · Researcher";
 const VERIF = "驗證 · Verifier", REPLIC = "第二實作 · Replicator", REVIEW = "審查 · Reviewer";
@@ -451,10 +452,22 @@ export function ReproTargetCard({ target }: { target: ReproTarget }) {
         {target.paper_title && <span className="muted small">{target.paper_title}</span>}
         <div className="muted small">AI 從論文抽出的「要對上的結果」；規劃會對準這些，驗證會逐項比對論文值。</div>
       </div>
+      {target.validation_case?.what && (
+        <div className="repro-valid">
+          <span className="repro-valid-h">✦ 先打到容差的基準案例</span>
+          <div>{target.validation_case.what}
+            {target.validation_case.expected && <span className="repro-exp"> → {target.validation_case.expected}</span>}
+            {target.validation_case.tolerance && <span className="muted small">（容差 {target.validation_case.tolerance}）</span>}</div>
+        </div>
+      )}
       {ts.map((t, i) => (
         <div className="repro-item" key={t.id || i}>
-          <div className="repro-what"><span className="repro-id">{t.id || `T${i + 1}`}</span>{t.what}</div>
+          <div className="repro-what">
+            <span className="repro-id">{t.id || `T${i + 1}`}</span>{t.what}
+            {t.kind && <span className="repro-kind">{KIND_LABEL[t.kind] || t.kind}</span>}
+          </div>
           {t.expected && <div className="repro-exp"><span className="muted small">論文值</span> {t.expected}</div>}
+          {t.compare && <div className="repro-compare muted small">比對：{t.compare}</div>}
           <div className="repro-meta muted small">
             {t.tolerance && <span>容差 {t.tolerance}</span>}
             {t.where && <span>· {t.where}</span>}

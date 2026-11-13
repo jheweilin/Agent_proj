@@ -661,13 +661,19 @@ async def _extract_repro_target(thread, title: str, text: str) -> dict | None:
         "你是研究復現助理，使用者要『照這篇論文復現』。請**只根據論文內容**抽出一張結構化「復現目標」，"
         "給後面的規劃與驗證對準。用繁體中文、只輸出 JSON（不要其他文字）：\n"
         '{"paper_title": "...",'
+        ' "validation_case": {"what": "最該先打到容差的單一基準案例（通常是論文的驗證/基準工況）",'
+        '   "expected": "該案例論文報的值（含數字單位）", "tolerance": "容差（如 ±5%）"},'
         ' "targets": [{"id": "T1", "what": "要復現的具體結果（哪張圖/表/數值）",'
+        ' "kind": "table｜line｜field｜scalar（表值/折線圖/場圖或等值面/單一純量）",'
+        ' "compare": "**依 kind 給比對方法**：table/scalar→直接比數值；line→數位化論文曲線再疊圖算誤差；'
+        'field→定性比結構＋在幾個探針點比值（不能只『看起來像』）",'
         ' "expected": "論文報的值或趨勢（儘量含數字與單位）", "tolerance": "可接受誤差（如 ±5%；定性的寫「趨勢一致」）",'
         ' "where": "在論文哪裡（Fig./Table/頁）"}],'
         ' "method": "方法與模型摘要（控制方程/數值方法/求解器）",'
         ' "key_params": {"參數名": "值（含單位）"},'
         ' "missing_info": ["論文沒明講、復現時要自行假設的項目"]}\n\n'
-        "要求：targets 抓 3～8 個最關鍵、可量化驗證的；expected 儘量帶數字；論文沒給的別硬編、放進 missing_info。\n\n"
+        "要求：targets 抓 3～8 個最關鍵、可量化驗證的；**每個都要給 kind 與對應的 compare 方法**（場圖別只寫『看起來像』）；"
+        "expected 儘量帶數字；挑一個最適合當 validation_case 的基準案例；論文沒給的別硬編、放進 missing_info。\n\n"
         f"論文標題：{title}\n論文內容：\n{text[:110000]}")
     model, _, _ = agent.thread_runtime(thread, "chat")
     try:
