@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, desc, or_, select
@@ -688,6 +688,34 @@ async def list_files(thread_id: str, path: str = "/workspace", user: User = Depe
     return {"path": sandbox.to_container_path(tid, base), "entries": entries}
 
 
+async def _stored_tool_image(thread_id, path: str, s: AsyncSession) -> tuple[bytes, str] | None:
+    """A see_image result keeps the image inline (base64) in the message. If the live workspace file
+    was later deleted/overwritten by the agent, serve that stored copy so the step can still show it."""
+    import base64
+    want = (path or "").strip()
+    rows = (await s.execute(select(Message.content).where(
+        Message.thread_id == thread_id, Message.role == "user").order_by(Message.id))).scalars().all()
+    for content in rows:
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if b.get("type") != "tool_result" or not isinstance(b.get("content"), list):
+                continue
+            c = b["content"]
+            if not any(x.get("type") == "text" and x.get("text", "").startswith("圖片 ")
+                       and x["text"].split(" ", 1)[-1].split("（")[0].strip() == want for x in c):
+                continue
+            for x in c:
+                if x.get("type") == "image":
+                    src = x.get("source") or {}
+                    if src.get("data"):
+                        try:
+                            return base64.b64decode(src["data"]), src.get("media_type") or "image/png"
+                        except Exception:
+                            return None
+    return None
+
+
 @app.get("/api/threads/{thread_id}/file")
 async def get_file(thread_id: str, path: str, download: int = 0, user: User = Depends(current_user),
                    s: AsyncSession = Depends(get_session)):
@@ -697,6 +725,11 @@ async def get_file(thread_id: str, path: str, download: int = 0, user: User = De
     except sandbox.PathError as e:
         raise HTTPException(400, str(e))
     if not p.is_file():
+        stored = await _stored_tool_image(t.id, path, s)   # file gone → fall back to the inline see_image copy
+        if stored:
+            data, mime = stored
+            return Response(content=data, media_type=mime,
+                            headers={"Content-Disposition": f'inline; filename="{Path(path).name}"'})
         raise HTTPException(404, "檔案不存在")
     mime = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
     inline_ok = mime.startswith("image/") or mime in ("application/pdf", "text/plain")
