@@ -483,6 +483,7 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
 .mode-seg button { flex: 1; border: none; background: none; padding: 6px 8px; border-radius: 7px; font-size: 13px; color: var(--muted); cursor: pointer; }
 .mode-seg button.on { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: var(--shadow); }
 .domain-badge.project { color: var(--accent); background: var(--accent-soft); }
+.domain-badge.repro { color: var(--ok); background: var(--ok-soft); }
 
 .track { position: sticky; top: 0; z-index: 6; background: var(--bg); display: flex; align-items: flex-start; padding: 14px 4px 14px; margin: 0 0 8px; border-bottom: 1px solid var(--border); }
 .track-node { display: flex; flex-direction: column; align-items: center; gap: 7px; position: relative; flex: 1 1 0; min-width: 54px; background: none; border: none; padding: 0 2px; font: inherit; color: inherit; cursor: pointer; }
@@ -727,6 +728,21 @@ table.csv th { background: var(--panel-2); position: sticky; top: 0; }
 .xlab-sum { line-height: 1.6; }
 .xlab-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
 .xlab-ok { color: var(--ok); font-weight: 600; }
+/* reproduction target card (復現論文) */
+.repro { border: 1px solid var(--accent-2); background: var(--panel); border-radius: 12px; padding: 13px 15px; margin: 0 auto 10px; max-width: 1100px; display: flex; flex-direction: column; gap: 9px; }
+.repro-head { display: flex; flex-direction: column; gap: 2px; }
+.repro-head > span:first-of-type { font-weight: 600; }
+.repro-item { border-left: 3px solid var(--accent-2); background: var(--panel-2); border-radius: 0 8px 8px 0; padding: 7px 11px; display: flex; flex-direction: column; gap: 3px; }
+.repro-what { font-weight: 600; }
+.repro-id { display: inline-block; min-width: 26px; color: var(--accent); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; margin-right: 6px; }
+.repro-exp { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; }
+.repro-exp .muted { margin-right: 6px; }
+.repro-meta { display: flex; gap: 6px; flex-wrap: wrap; }
+.repro-missing { border: 1px dashed var(--run); background: var(--run-soft); border-radius: 8px; padding: 7px 11px; }
+.repro-missing-h { color: var(--run); font-weight: 600; font-size: 13px; }
+.repro-missing ul { margin: 4px 0 0; padding-left: 20px; font-size: 13px; }
+.repro-more-body { margin-top: 8px; }
+.repro-more-body p { color: var(--text-2); line-height: 1.6; }
 
 /* lab library */
 .lab-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }

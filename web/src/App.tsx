@@ -212,6 +212,7 @@ export default function App() {
                      onClick={() => { setCurrent(t.id); setSidebarOpen(false); }}>
                   <span className="thread-title" title={t.title}>{t.title}</span>
                   {t.mode === "project" && <span className="domain-badge project">專案</span>}
+                  {t.mode === "repro" && <span className="domain-badge repro">復現</span>}
                   {!mobileRead && (
                     <span className="thread-actions" onClick={(e) => e.stopPropagation()}>
                       <button className="icon" title="重新命名" onClick={() => renameThread(t)}>✎</button>
@@ -244,6 +245,7 @@ export default function App() {
                     <button key={t.id} className="mobile-thread-row" onClick={() => setCurrent(t.id)}>
                       <span className="mtr-title">{t.title}</span>
                       {t.mode === "project" && <span className="domain-badge project">專案</span>}
+                  {t.mode === "repro" && <span className="domain-badge repro">復現</span>}
                     </button>
                   ))}
                 </div>

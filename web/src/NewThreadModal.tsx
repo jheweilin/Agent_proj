@@ -20,7 +20,7 @@ export default function NewThreadModal(
   { domains, defaultDomain, defaultMode, onCreate, onClose }:
   { domains: DomainChoice[]; defaultDomain: string; defaultMode: string;
     onCreate: (o: CreateOpts) => void; onClose: () => void }) {
-  const [mode, setMode] = useState(defaultMode);
+  const [mode, setMode] = useState(defaultMode);   // "chat" | "project" | "repro"（復現論文）
   const [domain, setDomain] = useState(defaultDomain);
   const [info, setInfo] = useState<ModelsInfo | null>(null);
   const [advanced, setAdvanced] = useState(false);
@@ -36,7 +36,9 @@ export default function NewThreadModal(
     }).catch(() => { /* advanced options just stay unavailable */ });
   }, []);
 
-  const slots = useMemo(() => info?.agents.filter((a) => a.modes.includes(mode)) ?? [], [info, mode]);
+  // 復現論文 reuses the project roles (clarifier/planner/researcher/…)
+  const slotMode = mode === "repro" ? "project" : mode;
+  const slots = useMemo(() => info?.agents.filter((a) => a.modes.includes(slotMode)) ?? [], [info, slotMode]);
   const modelOf = (key: string) => models[key] || info?.default_model || "";
 
   const create = () => {
@@ -73,6 +75,10 @@ export default function NewThreadModal(
             <span className="mc-title">研究專案</span>
             <span className="mc-desc">完整九階段流程：AI 先幫你釐清問題、查證據、擬計畫，<strong>你核准後</strong>才動手做，再獨立驗證、複現、審查並評等，最後<strong>由你驗收</strong>。</span>
           </button>
+          <button className={`mode-card ${mode === "repro" ? "on" : ""}`} onClick={() => setMode("repro")}>
+            <span className="mc-title">復現論文</span>
+            <span className="mc-desc"><strong>上傳一篇論文</strong>，AI 深讀後抽出「復現目標」（要對上的圖/表/數值＋容差），照九階段復現並<strong>逐項對照論文真值</strong>。開始後把 PDF 拖進對話即可。</span>
+          </button>
         </div>
 
         <button className={`adv-toggle ${advanced ? "open" : ""}`} onClick={() => setAdvanced((v) => !v)}>
@@ -86,7 +92,7 @@ export default function NewThreadModal(
             {info && (
               <>
                 <div className="adv-sec-title">
-                  {mode === "project" ? "每個階段用哪個模型" : "AI 模型"}
+                  {mode === "chat" ? "AI 模型" : "每個階段用哪個模型"}
                   {slots.length > 1 && (
                     <select className="apply-all" value="" title="一次套用到所有階段"
                             onChange={(e) => { const v = e.target.value; if (v) setModels(Object.fromEntries(slots.map((s) => [s.key, v]))); }}>
@@ -136,7 +142,7 @@ export default function NewThreadModal(
 
         <div className="modal-foot">
           <button className="btn small" onClick={onClose}>取消</button>
-          <button className="btn primary" onClick={create}>建立{mode === "project" ? "研究專案" : "對話"}</button>
+          <button className="btn primary" onClick={create}>建立{mode === "chat" ? "對話" : mode === "repro" ? "復現專案" : "研究專案"}</button>
         </div>
       </div>
     </div>

@@ -97,10 +97,15 @@ export type PlanTool = { name: string; why: string; enabled?: boolean };
 export type Nomination = { lab_id: string; lab_name: string; status: string; source?: string; doc_id?: string; detail?: string };
 export type ClarifyQuestion = { question: string; why?: string };
 export type CrossLabMatch = { lab_id: string; name: string; summary: string; keywords: string[]; score: number; grant_status?: "none" | "requested" | "granted" };
+export type ReproTarget = {
+  paper_title?: string; method?: string; key_params?: Record<string, string>; missing_info?: string[];
+  targets?: { id?: string; what: string; expected?: string; tolerance?: string; where?: string }[];
+};
 export type Project = {
   stage: string; status: string; stages: ProjectStage[];
   grade?: Grade | null; plan_steps?: PlanStep[]; plan_tools?: PlanTool[];
   questions?: ClarifyQuestion[]; nomination?: Nomination | null; cross_lab?: CrossLabMatch[];
+  repro_target?: ReproTarget | null; interrupt_reason?: string | null;
 };
 
 // injected pipeline messages carry a machine marker so the UI renders them as stage cards / notes

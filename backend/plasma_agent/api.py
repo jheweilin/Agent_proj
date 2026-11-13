@@ -205,7 +205,7 @@ class ThreadIn(BaseModel):
 
 @app.post("/api/threads")
 async def create_thread(body: ThreadIn, user: User = Depends(current_user), s: AsyncSession = Depends(get_session)):
-    mode = "project" if body.mode == "project" else "chat"
+    mode = body.mode if body.mode in ("project", "repro") else "chat"
     t = Thread(user_id=user.id, title=(body.title or "新對話")[:300], domain=domains.get(body.domain).name, mode=mode,
                config=_sanitize_config(body.config))
     s.add(t)
@@ -339,7 +339,7 @@ async def get_messages(thread_id: str, user: User = Depends(current_user), s: As
     t = await _view_thread(thread_id, user, s)
     rows = (await s.execute(select(Message).where(Message.thread_id == t.id).order_by(Message.id))).scalars().all()
     runs = (await s.execute(select(Run).where(Run.thread_id == t.id).order_by(Run.created_at))).scalars().all()
-    project = pipeline.project_out(await pipeline.gate_status(t.id)) if getattr(t, "mode", "chat") == "project" else None
+    project = pipeline.project_out(await pipeline.gate_status(t.id)) if getattr(t, "mode", "chat") in ("project", "repro") else None
     return {"items": _display(rows), "runs": [_run_out(r) for r in runs], "project": project}
 
 
@@ -426,7 +426,7 @@ async def thread_status(thread_id: str, user: User = Depends(current_user), s: A
     tf = sandbox.workspace_dir(tid) / "todo.md"
     if tf.is_file():
         todo = tf.read_text(errors="replace")[:20000]
-    project = pipeline.project_out(await pipeline.gate_status(t.id)) if getattr(t, "mode", "chat") == "project" else None
+    project = pipeline.project_out(await pipeline.gate_status(t.id)) if getattr(t, "mode", "chat") in ("project", "repro") else None
     kbinfo = await kb.thread_stats(t.id) if kb.enabled() else None
     return {"run": run_info, "sandbox": sbx, "comsol": await _comsol_health(), "jobs": jobs, "todo": todo,
             "model": settings.model, "project": project, "kb": kbinfo}
@@ -443,7 +443,7 @@ async def post_message(thread_id: str, body: MessageIn, user: User = Depends(cur
     t = await _own_thread(thread_id, user, s)
     if await _active_run(t.id, s):
         raise HTTPException(409, "這個對話還在執行中，請等它結束或先按停止")
-    if getattr(t, "mode", "chat") == "project":
+    if getattr(t, "mode", "chat") in ("project", "repro"):
         p = await pipeline.gate_status(t.id)
         if p and p.status in ("awaiting_clarification", "awaiting_plan_approval", "awaiting_acceptance"):
             raise HTTPException(409, "這個研究專案正在等你回覆／核准目前的關卡，請用上方的卡片處理")

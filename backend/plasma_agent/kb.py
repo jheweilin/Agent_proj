@@ -431,6 +431,21 @@ async def document_text(doc_id: str, max_chars: int = 200000) -> str:
     return body if len(body) <= max_chars else body[:max_chars] + "\n…（截斷）"
 
 
+async def thread_paper_text(thread_id, max_chars: int = 120000) -> tuple[str, str] | None:
+    """Full text of the paper uploaded to this thread (its task KB), for deep reading (reproduction).
+    Prefers a PDF, else the largest uploaded doc. Returns (title, text) or None."""
+    async with SessionLocal() as s:
+        docs = (await s.execute(
+            select(KbDocument).join(KbDataset, KbDataset.id == KbDocument.dataset_id)
+            .where(KbDataset.thread_id == uuid.UUID(str(thread_id)), KbDataset.category == "task",
+                   KbDocument.status == "approved").order_by(KbDocument.n_chunks.desc()))).scalars().all()
+    if not docs:
+        return None
+    doc = next((d for d in docs if (d.mime or "").endswith("pdf") or (d.source or "").lower().endswith(".pdf")), docs[0])
+    text = await document_text(str(doc.id), max_chars=max_chars)
+    return (doc.title or doc.source, text) if text.strip() else None
+
+
 async def set_document_meta(doc_id: str, dataset_id, *, title=None, tags=None, confidential=None) -> bool:
     """Edit a document's display title, topic tags and/or 不外流 flag. Scoped to dataset_id."""
     async with SessionLocal() as s:

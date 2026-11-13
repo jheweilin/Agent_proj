@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, CrossLabMatch, Item, Lab, parsePipe, PlanStep, PlanTool, Project } from "./api";
+import { api, CrossLabMatch, Item, Lab, parsePipe, PlanStep, PlanTool, Project, ReproTarget } from "./api";
 import { Markdown } from "./Render";
 
 // stages actually implemented in the current phase; the rest show as "之後" (Phase D)
@@ -120,8 +120,10 @@ export function ApprovalBar({ project, busy, onApprove, onReject, onAnswer, onRe
         <div className="approve-head">
           <span className="approve-icon warn">⏸</span>
           <div>
-            <strong>研究已中斷</strong>
-            <div className="approve-sub muted small">在「{stageLabel}」階段停止或中斷（可能是你按了停止，或遇到錯誤）。你可以接著跑完整個流程，或改用對話接手、只用目前成果做一件事。</div>
+            <strong>{project.interrupt_reason === "capped" ? "達單次執行上限、做到一半" : "研究已中斷"}</strong>
+            <div className="approve-sub muted small">{project.interrupt_reason === "capped"
+              ? <>在「{stageLabel}」階段跑到單次執行上限、先暫停（還沒做完）。按「繼續跑完流程」會<strong>接著把這階段做完</strong>再往下；或改用對話接手。</>
+              : <>在「{stageLabel}」階段停止或中斷（可能是你按了停止，或遇到錯誤）。你可以接著跑完整個流程，或改用對話接手、只用目前成果做一件事。</>}</div>
           </div>
         </div>
         <textarea className="clarify-answer" rows={2} value={cont} onChange={(e) => setCont(e.target.value)}
@@ -434,6 +436,52 @@ export function CrossLabCard({ matches, threadId, topic, onOpenDirectory }:
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// Reproduction target extracted from an uploaded paper — what the reproduction must match (閘門 near plan)
+export function ReproTargetCard({ target }: { target: ReproTarget }) {
+  const [open, setOpen] = useState(false);
+  const ts = target.targets || [];
+  return (
+    <div className="repro">
+      <div className="repro-head">
+        <strong>📄 復現目標</strong>
+        {target.paper_title && <span className="muted small">{target.paper_title}</span>}
+        <div className="muted small">AI 從論文抽出的「要對上的結果」；規劃會對準這些，驗證會逐項比對論文值。</div>
+      </div>
+      {ts.map((t, i) => (
+        <div className="repro-item" key={t.id || i}>
+          <div className="repro-what"><span className="repro-id">{t.id || `T${i + 1}`}</span>{t.what}</div>
+          {t.expected && <div className="repro-exp"><span className="muted small">論文值</span> {t.expected}</div>}
+          <div className="repro-meta muted small">
+            {t.tolerance && <span>容差 {t.tolerance}</span>}
+            {t.where && <span>· {t.where}</span>}
+          </div>
+        </div>
+      ))}
+      {target.missing_info && target.missing_info.length > 0 && (
+        <div className="repro-missing">
+          <span className="repro-missing-h">⚠ 論文未明說、復現時需假設：</span>
+          <ul>{target.missing_info.map((m, i) => <li key={i}>{m}</li>)}</ul>
+        </div>
+      )}
+      {(target.method || target.key_params) && (
+        <div className="repro-more">
+          <button className="btn ghost small" onClick={() => setOpen((v) => !v)}>{open ? "收合方法與參數 ▴" : "方法與關鍵參數 ▾"}</button>
+          {open && (
+            <div className="repro-more-body">
+              {target.method && <p className="small">{target.method}</p>}
+              {target.key_params && (
+                <div className="kv-grid">{Object.entries(target.key_params).map(([k, v]) => (
+                  <><span key={k + "k"}>{k}</span><span key={k + "v"}>{String(v)}</span></>
+                ))}</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

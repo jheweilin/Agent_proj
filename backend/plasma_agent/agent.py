@@ -207,6 +207,7 @@ class Runner:
         if block_external:  # user didn't authorise external/licensed services (COMSOL) → hard-remove them
             allow = all_names if self._tool_allow is None else set(self._tool_allow)
             self._tool_allow = {n for n in allow if not roles.is_external_tool(n)}
+        self.capped = False          # True if loop() exhausted max_iters without the agent finishing
         self.binding_beta = True     # send thinking-binding-controls beta with drop_block
         self.strip_thinking = False  # fallback: remove earlier thinking blocks from the request copy
         self.usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0,
@@ -353,7 +354,8 @@ class Runner:
             messages.append({"role": "user", "content": results})
             await _save_message(self.thread.id, self.run.id, "user", results)
 
-        await self.publish({"type": "status", "text": f"已達單次執行上限 {self.max_iters} 輪，暫停。輸入「繼續」可接著做。"})
+        self.capped = True   # hit the single-run iteration cap WITHOUT finishing (pipeline must not advance)
+        await self.publish({"type": "status", "text": f"已達單次執行上限 {self.max_iters} 輪，暫停。"})
         return "completed"
 
     async def _run_tools(self, tool_uses) -> list[dict]:
@@ -473,7 +475,7 @@ async def execute_run(run_id: str) -> None:
 
     status, error = "failed", None
     try:
-        if getattr(thread, "mode", "chat") == "project":
+        if getattr(thread, "mode", "chat") in ("project", "repro"):  # both run the staged pipeline
             from . import pipeline  # local import avoids a circular import at module load
             gate = await pipeline.gate_status(thread.id)
             if gate is not None and gate.status in ("completed", "handoff"):
@@ -521,7 +523,7 @@ async def execute_run(run_id: str) -> None:
     await r.delete(busy_key)
     # a project run that stopped/crashed mid-stage leaves the project 'running' with no active run —
     # flip it to 'interrupted' so the UI can offer a resume instead of looking stuck
-    if getattr(thread, "mode", "chat") == "project" and status in ("stopped", "failed"):
+    if getattr(thread, "mode", "chat") in ("project", "repro") and status in ("stopped", "failed"):
         from . import pipeline
         st = await pipeline.mark_interrupted(thread.id)
         if st is not None:

@@ -1,7 +1,7 @@
 import { DragEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, Attachment, Block, copyText, eventsUrl, fileUrl, fmtDuration, fmtTime, fmtTokens, Item, modelName, parsePipe, PlanStep, Project, RunInfo, ToolBlock, Usage } from "./api";
 import Panel, { PanelTab } from "./Panel";
-import { ApprovalBar, CrossLabCard, EvidenceCard, NominateCard, PipelineNote, StageTracker, stageLabels } from "./Pipeline";
+import { ApprovalBar, CrossLabCard, EvidenceCard, NominateCard, PipelineNote, ReproTargetCard, StageTracker, stageLabels } from "./Pipeline";
 import { AssistantTurn, FileOpenCtx, ImagePreviewCtx, KbDocOpenCtx, KbDocRef, Markdown } from "./Render";
 import { meta } from "./tools";
 
@@ -212,11 +212,13 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
   const lastRun = runs[runs.length - 1];
   const liveTokens = (live.usage.input_tokens || 0) + (live.usage.cache_read_input_tokens || 0) + (live.usage.cache_creation_input_tokens || 0);
   const isProject = mode === "project";
-  const atGate = isProject && !activeRun && !!project &&
+  const isRepro = mode === "repro";            // 復現論文：和研究專案平行、共用九階段機制
+  const isPipeline = isProject || isRepro;     // 走九階段 pipeline 的模式
+  const atGate = isPipeline && !activeRun && !!project &&
     (project.status === "awaiting_clarification" || project.status === "awaiting_plan_approval"
       || project.status === "awaiting_acceptance" || project.status === "interrupted");
-  const ann = useMemo(() => (isProject ? stageLabels(shown)
-    : { labels: {} as Record<number, string>, stages: {} as Record<number, string> }), [shown, isProject]);
+  const ann = useMemo(() => (isPipeline ? stageLabels(shown)
+    : { labels: {} as Record<number, string>, stages: {} as Record<number, string> }), [shown, isPipeline]);
   const jumpToStage = useCallback((stage: string) => {
     const target = stage === "approve_plan" ? "plan" : stage === "report" ? "research" : stage;
     const els = scrollRef.current?.querySelectorAll(`[data-stage="${target}"]`);
@@ -238,11 +240,11 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
         <header className="chat-head">
           <div className="chat-title" title={title}>{title || "對話"}</div>
           <span className="spacer" />
-          {!isProject && !activeRun && items.length > 0 && (
+          {!isPipeline && !activeRun && items.length > 0 && (
             <button className="btn ghost small head-promote" disabled={gateBusy} onClick={promote}
                     title="把這個對話接上九階段研究流程（釐清→規劃→研究→驗證→審查，關鍵處你把關）">轉成研究專案</button>
           )}
-          {isProject && !activeRun && project?.status === "completed" && !project.nomination && (
+          {isPipeline && !activeRun && project?.status === "completed" && !project.nomination && (
             <button className={"btn ghost small head-nominate" + (nominateHint ? " pulse" : "")}
                     onClick={() => { setNominateOpen(true); setNominateHint(false); stickRef.current = true; bottomRef.current?.scrollIntoView({ block: "end" }); }}
                     title="把這次研究整理成經驗筆記、納入實驗室知識庫">納入實驗室庫</button>
@@ -289,9 +291,14 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
         <KbDocOpenCtx.Provider value={openKbDoc}>
         <div className="messages" ref={scrollRef} onScroll={onScroll}>
           <div className="messages-inner">
-            {isProject && project && <StageTracker project={project} live={!!activeRun} onJump={jumpToStage} />}
+            {isPipeline && project && <StageTracker project={project} live={!!activeRun} onJump={jumpToStage} />}
             {shown.length === 0 && !activeRun && (
-              isProject ? (
+              isRepro ? (
+                <div className="project-intro">
+                  <div className="examples-title">復現論文</div>
+                  <p className="muted">把要復現的論文 PDF 拖進來（或用「＋上傳檔案」），並說明要復現哪個結果。AI 會深讀論文、抽出「復現目標」，照九階段復現並逐項對照論文值。</p>
+                </div>
+              ) : isProject ? (
                 <div className="project-intro">
                   <div className="examples-title">研究專案模式</div>
                   <p className="muted">描述你的研究想法，流程會自動開始：釐清 → 檢索證據 → 規劃 →（你核准）→ 研究 →（你驗收）。每一步都看得到，關鍵決策由你把關。</p>
@@ -311,7 +318,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
             )}
             {shown.map((it) => {
               if (it.kind === "user") {
-                const p = isProject ? parsePipe(it.text) : null;
+                const p = isPipeline ? parsePipe(it.text) : null;
                 if (p?.kind === "evidence") return <EvidenceCard key={`u${it.id}`} body={p.body} threadId={threadId} />;
                 if (p?.kind === "note") return <PipelineNote key={`u${it.id}`} note={p.note} body={p.body} />;
                 return (
@@ -331,7 +338,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
             {activeRun && (
               <div className="msg assistant">
                 <AssistantTurn blocks={live.blocks} attachments={live.attachments} threadId={threadId} live
-                  roleLabel={isProject ? live.stage : undefined}
+                  roleLabel={isPipeline ? live.stage : undefined}
                   selectedId={selected?.id} onSelect={openStep} onOpenFile={openFile} />
                 <div className="status-line">
                   <span className="pulse-dot" />
@@ -344,7 +351,7 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
             {!activeRun && lastRun?.status === "failed" && lastRun.error && <div className="error">上一次執行失敗：{lastRun.error}</div>}
             {/* current-action cards live at the end of the conversation flow (scroll with history,
                 never squeeze the messages area the way a fixed composer block would) */}
-            {!isProject && suggestProject && !dismissPromote && !activeRun && items.length > 0 && (
+            {!isPipeline && suggestProject && !dismissPromote && !activeRun && items.length > 0 && (
               <div className="promote-suggest">
                 <div className="promote-text">
                   <strong>這看起來是個完整研究任務</strong>
@@ -357,11 +364,12 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
                 </div>
               </div>
             )}
-            {isProject && !activeRun && project?.cross_lab && project.cross_lab.length > 0 && (
+            {isPipeline && !activeRun && project?.repro_target && <ReproTargetCard target={project.repro_target} />}
+            {isPipeline && !activeRun && project?.cross_lab && project.cross_lab.length > 0 && (
               <CrossLabCard matches={project.cross_lab} threadId={threadId} topic={title} onOpenDirectory={onOpenDirectory} />
             )}
             {atGate && project && <ApprovalBar project={project} busy={gateBusy} onApprove={approve} onReject={reject} onAnswer={answerClarify} onResume={resume} onHandoff={handoff} />}
-            {isProject && !activeRun && project?.status === "completed"
+            {isPipeline && !activeRun && project?.status === "completed"
               && <NominateCard project={project} threadId={threadId} forceShow={nominateOpen}
                    onClose={() => { setNominateOpen(false); setNominateHint(true); setTimeout(() => setNominateHint(false), 2000); }} />}
             <div ref={bottomRef} />
@@ -385,9 +393,10 @@ export default function Chat({ threadId, onActivity, initialPrompt, onPromptUsed
               rows={Math.min(10, Math.max(2, text.split("\n").length))}
               placeholder={atGate ? "請先用上方的卡片處理目前的關卡（回覆／核准／退回）"
                 : activeRun ? (stopping ? "停止中…等目前步驟結束就會中斷" : "執行中…可以按「停止」中斷")
-                : isProject ? (project?.status === "completed" || project?.status === "handoff"
+                : isPipeline ? (project?.status === "completed" || project?.status === "handoff"
                     ? "針對目前的成果繼續追問，或要求調整…"
-                    : "描述你的研究想法，流程會自動開始…")
+                    : isRepro ? "把要復現的論文 PDF 拖進來，並說明要復現哪個結果…"
+                      : "描述你的研究想法，流程會自動開始…")
                   : "描述你的研究問題，或上傳資料與文件…"}
               disabled={!!activeRun || atGate} />
             <div className="composer-bar">

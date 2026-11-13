@@ -70,8 +70,13 @@ async def _latest_user_text(thread_id: uuid.UUID) -> str:
     return ""
 
 
-async def _run_role(outer, role, stage: str, init_messages=None, block_external=False) -> None:
-    """Run one LLM stage as its own agent loop, folding its usage into the outer run.
+# pipeline stages (esp. research/reproduction) are long; give them more headroom than a chat turn
+PIPELINE_MIN_ITERS = 200
+
+
+async def _run_role(outer, role, stage: str, init_messages=None, block_external=False) -> bool:
+    """Run one LLM stage as its own agent loop, folding its usage into the outer run. Returns True if
+    the stage hit the single-run iteration cap WITHOUT finishing (so the FSM should pause, not advance).
 
     `init_messages` runs the role from a constructed context instead of the thread history
     (used by the Replicator so it can't see the research results — true independence).
@@ -80,12 +85,13 @@ async def _run_role(outer, role, stage: str, init_messages=None, block_external=
     await outer.publish({"type": "stage_start", "stage": stage, "role": role.name, "label": role.label})
     model, effort, max_iters = agent.thread_runtime(outer.thread, role.name)
     r = agent.Runner(outer.run, outer.thread, outer.user, outer.domain, role=role, init_messages=init_messages,
-                     model=model, effort=effort, max_iters=max_iters, block_external=block_external)
+                     model=model, effort=effort, max_iters=max(max_iters, PIPELINE_MIN_ITERS), block_external=block_external)
     await r.loop()
     for k in outer.usage:
         outer.usage[k] += r.usage.get(k, 0)
     outer.model = r.model
     await outer.publish({"type": "stage_end", "stage": stage, "role": role.name})
+    return r.capped
 
 
 async def _latest_assistant_text(thread_id: uuid.UUID) -> str:
@@ -155,6 +161,21 @@ async def _retrieve(outer) -> None:
     await outer.publish({"type": "stage_start", "stage": stage, "role": "retrieval", "label": "檢索證據"})
     query = await _latest_user_text(outer.thread.id)
     parts: list[str] = []
+    # 0) reproduction mode: deep-read the uploaded paper → a structured reproduction target, so the
+    #    Planner aims at the paper's reported values (and later the Verifier checks against them)
+    if getattr(outer.thread, "mode", "") == "repro" \
+            and not (await _get_card(outer.thread.id)).get("repro_target"):
+        try:
+            paper = await kb.thread_paper_text(outer.thread.id)
+            if paper:
+                target = await _extract_repro_target(outer.thread, paper[0], paper[1])
+                if target:
+                    await _set_card(outer.thread.id, repro_target=target)
+                    parts.append("【復現目標（從論文抽取，規劃與驗證請對準這些值）】\n"
+                                 + json.dumps(target, ensure_ascii=False, indent=1))
+                    await outer.publish({"type": "status", "text": "已從論文抽出復現目標"})
+        except Exception as e:
+            log.warning("repro target extraction failed: %s", e)
     # 1) the thread's own knowledge base (task + base + own labs) — highest priority
     if kb.enabled():
         try:
@@ -226,7 +247,7 @@ def _grade(verdict: dict | None, replication: dict | None, review: dict | None) 
     return {"level": level, "passed": passed, "total": total, "summary": summary}
 
 
-async def _verify(outer, block_external=False) -> None:
+async def _verify(outer, block_external=False) -> bool:
     """Stage ⑥: independent verification (same sandbox, reruns & checks → structured verdict)."""
     try:
         (sandbox.workspace_dir(str(outer.thread.id)) / ".pipeline" / "verification.json").unlink()
@@ -235,11 +256,12 @@ async def _verify(outer, block_external=False) -> None:
     # the turn must end with a user message before the next LLM role runs (Bedrock has no prefill)
     await agent._save_message(outer.thread.id, outer.run.id, "user", [{"type": "text", "text": _note("verify") +
         "\n（請以獨立驗證者的身分，重跑並查核上述研究結果；完成後用 record_verification 記錄結構化結論。）"}])
-    await _run_role(outer, roles.VERIFIER, "verify", block_external=block_external)
+    capped = await _run_role(outer, roles.VERIFIER, "verify", block_external=block_external)
     await _set_card(outer.thread.id, verification=_read_json(outer.thread.id, "verification.json"))
+    return capped
 
 
-async def _replicate(outer) -> None:
+async def _replicate(outer) -> bool:
     """Stage ⑦: independent replication. The Replicator sees only the plan (isolated context)."""
     try:
         (sandbox.workspace_dir(str(outer.thread.id)) / ".pipeline" / "replication.json").unlink()
@@ -251,11 +273,12 @@ async def _replicate(outer) -> None:
             "record_replication 記錄關鍵數值；不要參考他人結果、不要上網或查知識庫。）\n\n【計畫】\n" + plan}]
     await agent._save_message(outer.thread.id, outer.run.id, "user", msg)
     # run from a constructed context (just the plan) so the Replicator can't see the research
-    await _run_role(outer, roles.REPLICATOR, "replicate", init_messages=[{"role": "user", "content": msg}])
+    capped = await _run_role(outer, roles.REPLICATOR, "replicate", init_messages=[{"role": "user", "content": msg}])
     await _set_card(outer.thread.id, replication=_read_json(outer.thread.id, "replication.json"))
+    return capped
 
 
-async def _review(outer) -> None:
+async def _review(outer) -> bool:
     """Stage ⑧: read-only review of research + verification + replication for consistency."""
     try:
         (sandbox.workspace_dir(str(outer.thread.id)) / ".pipeline" / "review.json").unlink()
@@ -263,8 +286,9 @@ async def _review(outer) -> None:
         pass
     await agent._save_message(outer.thread.id, outer.run.id, "user", [{"type": "text", "text": _note("review") +
         "\n（請審查上述研究、驗證與第二實作的物理與推論，以及三方結果是否一致；用 record_review 記錄疑慮與是否一致。）"}])
-    await _run_role(outer, roles.REVIEWER, "review")
+    capped = await _run_role(outer, roles.REVIEWER, "review")
     await _set_card(outer.thread.id, review=_read_json(outer.thread.id, "review.json"))
+    return capped
 
 
 async def _finalize_grade(outer) -> None:
@@ -307,6 +331,14 @@ async def _record_run_stage(run_id: uuid.UUID, stage: str) -> None:
             await s.commit()
 
 
+async def _pause_capped(thread_id, stage, outer) -> None:
+    """A stage hit the single-run iteration cap without finishing — pause (interrupted) so the user can
+    continue it, instead of advancing the FSM on half-done work (reuses the interrupted/resume gate)."""
+    await _set_card(thread_id, interrupt_reason="capped")
+    await _set(thread_id, stage, "interrupted", outer)
+    await outer.publish({"type": "project", "stage": stage, "status": "interrupted"})
+
+
 async def advance(run: Run, thread, user, domain, outer) -> str:
     """Drive the FSM forward from the project's current stage until a gate or terminal state."""
     project = await _get_or_create(thread)
@@ -319,7 +351,9 @@ async def advance(run: Run, thread, user, domain, outer) -> str:
                 (sandbox.workspace_dir(str(thread.id)) / ".pipeline" / "questions.json").unlink()
             except FileNotFoundError:
                 pass
-            await _run_role(outer, roles.CLARIFIER, stage)
+            if await _run_role(outer, roles.CLARIFIER, stage):
+                await _pause_capped(thread.id, stage, outer)
+                break
             q = (_read_json(thread.id, "questions.json") or {}).get("questions") or []
             if q:   # clarifier needs the user: pause at the clarification gate
                 await _set_card(thread.id, questions=q)
@@ -338,7 +372,9 @@ async def advance(run: Run, thread, user, domain, outer) -> str:
                 (sandbox.workspace_dir(str(thread.id)) / ".pipeline" / "plan.json").unlink()
             except FileNotFoundError:
                 pass
-            await _run_role(outer, roles.PLANNER, stage)
+            if await _run_role(outer, roles.PLANNER, stage):
+                await _pause_capped(thread.id, stage, outer)
+                break
             pj = _read_json(thread.id, "plan.json") or {}
             steps = pj.get("steps") or []
             tools = pj.get("tools") or []
@@ -349,22 +385,30 @@ async def advance(run: Run, thread, user, domain, outer) -> str:
             await outer.publish({"type": "awaiting_approval", "gate": "plan"})
             break
         elif stage == "research":
-            await _run_role(outer, roles.RESEARCHER, stage, block_external=not comsol_ok)
+            if await _run_role(outer, roles.RESEARCHER, stage, block_external=not comsol_ok):
+                await _pause_capped(thread.id, stage, outer)
+                break
             stage = "verify"
             await _set(thread.id, stage, "running", outer)
         elif stage == "verify":
-            await _verify(outer, block_external=not comsol_ok)          # ⑥ independent verification
+            if await _verify(outer, block_external=not comsol_ok):       # ⑥ independent verification
+                await _pause_capped(thread.id, stage, outer)
+                break
             if await _should_retry_research(outer):   # ⑥→⑤: failed verification loops back to research
                 stage = "research"
             else:
                 stage = "replicate"
             await _set(thread.id, stage, "running", outer)
         elif stage == "replicate":
-            await _replicate(outer)       # ⑦ independent replication (isolated context)
+            if await _replicate(outer):   # ⑦ independent replication (isolated context)
+                await _pause_capped(thread.id, stage, outer)
+                break
             stage = "review"
             await _set(thread.id, stage, "running", outer)
         elif stage == "review":
-            await _review(outer)          # ⑧ read-only review
+            if await _review(outer):      # ⑧ read-only review
+                await _pause_capped(thread.id, stage, outer)
+                break
             await _finalize_grade(outer)  # ⑨ programmatic grade from all three
             stage = "report"
             await _set(thread.id, stage, "awaiting_acceptance", outer)
@@ -542,6 +586,7 @@ async def resume(thread, note: str = "") -> dict:
         s.add(run)
         await s.flush()
         p.status = "running"
+        p.card = {k: v for k, v in (p.card or {}).items() if k != "interrupt_reason"}  # clear cap reason
         rid = run.id
         await s.commit()
     if (note or "").strip():
@@ -607,6 +652,37 @@ async def _first_user_text(thread_id: uuid.UUID) -> str:
             if txt:
                 return txt
     return ""
+
+
+async def _extract_repro_target(thread, title: str, text: str) -> dict | None:
+    """Read an uploaded paper and extract a structured reproduction target: what to reproduce (with the
+    paper's reported values + tolerance + location), method, key params, and info the paper omits."""
+    prompt = (
+        "你是研究復現助理，使用者要『照這篇論文復現』。請**只根據論文內容**抽出一張結構化「復現目標」，"
+        "給後面的規劃與驗證對準。用繁體中文、只輸出 JSON（不要其他文字）：\n"
+        '{"paper_title": "...",'
+        ' "targets": [{"id": "T1", "what": "要復現的具體結果（哪張圖/表/數值）",'
+        ' "expected": "論文報的值或趨勢（儘量含數字與單位）", "tolerance": "可接受誤差（如 ±5%；定性的寫「趨勢一致」）",'
+        ' "where": "在論文哪裡（Fig./Table/頁）"}],'
+        ' "method": "方法與模型摘要（控制方程/數值方法/求解器）",'
+        ' "key_params": {"參數名": "值（含單位）"},'
+        ' "missing_info": ["論文沒明講、復現時要自行假設的項目"]}\n\n'
+        "要求：targets 抓 3～8 個最關鍵、可量化驗證的；expected 儘量帶數字；論文沒給的別硬編、放進 missing_info。\n\n"
+        f"論文標題：{title}\n論文內容：\n{text[:110000]}")
+    model, _, _ = agent.thread_runtime(thread, "chat")
+    try:
+        resp = await agent.client().messages.create(
+            model=model, max_tokens=4000, output_config={"effort": "low"},
+            messages=[{"role": "user", "content": prompt}])
+        raw = "".join(b.text for b in resp.content if b.type == "text").strip()
+        if "```" in raw:
+            raw = raw.split("```")[1].removeprefix("json").strip()
+        start, end = raw.find("{"), raw.rfind("}")
+        data = json.loads(raw[start:end + 1]) if start >= 0 else {}
+        return data if data.get("targets") else None
+    except Exception as e:
+        log.exception("extract_repro_target failed: %s", e)
+        return None
 
 
 async def build_experience_doc(thread, card: dict) -> tuple[str, str]:
@@ -704,4 +780,6 @@ def project_out(p: Project | None) -> dict | None:
             "questions": (p.card or {}).get("questions") or [],
             "nomination": (p.card or {}).get("nomination"),
             "cross_lab": (p.card or {}).get("cross_lab") or [],
+            "repro_target": (p.card or {}).get("repro_target"),
+            "interrupt_reason": (p.card or {}).get("interrupt_reason"),
             "stages": [{"name": n, "label": l} for n, l in STAGE_LABELS]}
