@@ -84,8 +84,13 @@ async def _run_role(outer, role, stage: str, init_messages=None, block_external=
     """
     await outer.publish({"type": "stage_start", "stage": stage, "role": role.name, "label": role.label})
     model, effort, max_iters = agent.thread_runtime(outer.thread, role.name)
+    # reproduction mode: give the Planner/Researcher the repro execution discipline (solver/convergence/
+    # lock-one-case/compute-budget) — repro-only, never touches general research projects
+    extra = (roles.REPRO_EXEC_GUIDE if getattr(outer.thread, "mode", "") == "repro"
+             and role.name in ("planner", "researcher") else None)
     r = agent.Runner(outer.run, outer.thread, outer.user, outer.domain, role=role, init_messages=init_messages,
-                     model=model, effort=effort, max_iters=max(max_iters, PIPELINE_MIN_ITERS), block_external=block_external)
+                     model=model, effort=effort, max_iters=max(max_iters, PIPELINE_MIN_ITERS),
+                     block_external=block_external, extra_overlay=extra)
     await r.loop()
     for k in outer.usage:
         outer.usage[k] += r.usage.get(k, 0)

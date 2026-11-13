@@ -33,11 +33,13 @@ def client() -> anthropic.AsyncAnthropicBedrock:
     return _client
 
 
-def system_prompt(domain: domains.Domain, role=None) -> list[dict]:
+def system_prompt(domain: domains.Domain, role=None, extra=None) -> list[dict]:
     base = (settings.prompts_dir / domain.prompt_file).read_text()
     blocks = [{"type": "text", "text": base}]
     if role is not None:  # pipeline stage overlay (Clarifier/Planner/Researcher)
         blocks.append({"type": "text", "text": role.overlay})
+    if extra:  # mode-specific overlay (e.g. reproduction execution discipline)
+        blocks.append({"type": "text", "text": extra})
     today = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d")
     blocks.append({"type": "text", "text": f"今天日期（台灣時間）：{today}"})
     return blocks
@@ -186,7 +188,7 @@ def thread_runtime(thread: Thread, key: str) -> tuple[str, str, int]:
 
 class Runner:
     def __init__(self, run: Run, thread: Thread, user: User, domain: domains.Domain, role=None, init_messages=None,
-                 model=None, effort=None, max_iters=None, block_external=False):
+                 model=None, effort=None, max_iters=None, block_external=False, extra_overlay=None):
         self.run = run
         self.thread = thread
         self.user = user
@@ -207,6 +209,7 @@ class Runner:
         if block_external:  # user didn't authorise external/licensed services (COMSOL) → hard-remove them
             allow = all_names if self._tool_allow is None else set(self._tool_allow)
             self._tool_allow = {n for n in allow if not roles.is_external_tool(n)}
+        self.extra_overlay = extra_overlay   # extra system-prompt block (e.g. reproduction discipline)
         self.capped = False          # True if loop() exhausted max_iters without the agent finishing
         self.binding_beta = True     # send thinking-binding-controls beta with drop_block
         self.strip_thinking = False  # fallback: remove earlier thinking blocks from the request copy
@@ -241,7 +244,7 @@ class Runner:
         kwargs = dict(
             model=self.model,
             max_tokens=settings.max_tokens,
-            system=system_prompt(self.domain, self.role),
+            system=system_prompt(self.domain, self.role, self.extra_overlay),
             messages=messages,
             thinking=thinking,
             output_config={"effort": self.effort},

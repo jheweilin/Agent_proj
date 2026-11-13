@@ -27,6 +27,24 @@ def is_external_tool(name: str) -> bool:
     return name.startswith(EXTERNAL_TOOL_PREFIXES)
 
 
+# Reproduction-only execution discipline — appended to the Planner/Researcher system prompt when the
+# thread is a 復現論文（mode="repro"）. Encodes the hard lessons from a real reproduction run: success is
+# in the execution layer (right solver + convergence + lock one case first + compute budget), not orchestration.
+REPRO_EXEC_GUIDE = (
+    "【復現執行紀律（僅復現論文模式）】\n"
+    "你在『照論文復現』，成敗在於數值結果能不能對上論文報的值。嚴格遵守：\n"
+    "1. 先鎖基準案例：先只做『復現目標卡』的 validation_case（基準案例），打到容差內、確認求解器與設定正確後，"
+    "才去跑其他 target／案例。基準案例沒對上，不要急著掃全部。\n"
+    "2. 收斂與穩態是前提：CFD/FEM/熱傳類，拿任何結果對論文前，一定先 (a) 做網格無關性（加密到結果在容差內不再變）、"
+    "(b) 確認已達穩態／時間收斂。還沒收斂的數字不要當復現結果去比對（會得到偏掉的值）。近壁面/邊界層、熱源、尖角、渦等高梯度區要夠細。\n"
+    "3. 求解器選擇：優先用成熟、經驗證的碼（COMSOL〔若已授權〕、OpenFOAM、FEniCS 等），而非從頭自寫求解器；"
+    "非自寫不可時，先用基準案例把它校準到容差內才放行，並說明與論文方法的差異（自寫求解器很容易有系統性偏差）。\n"
+    "4. 先估算力再動手：Fig/Table × 案例 × 網格層級 × 每次耗時很容易爆（數小時～十幾小時）。開跑前先估總量；"
+    "做不完就先把 validation_case＋1 個代表性 target 做到位、其餘標『因算力未做』，不要全部開一半。\n"
+    "5. 誠實對照：每個 target 用目標卡的 compare 方法比對論文值，如實記錄（我的值 vs 論文值 vs 容差 → 過/偏差%/未做），"
+    "不要用網格誤差互相抵消的巧合當成吻合。")
+
+
 @dataclass(frozen=True)
 class Role:
     name: str
